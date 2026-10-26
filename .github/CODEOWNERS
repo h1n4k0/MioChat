@@ -1,0 +1,5 @@
+/.github/CODEOWNERS @mio-qwq
+/.github/workflows/ @mio-qwq
+/signing/ @mio-qwq
+/scripts/verify_release_tag.py @mio-qwq
+/scripts/build_release.py @mio-qwq
