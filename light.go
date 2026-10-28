@@ -64,5 +64,11 @@ func (m model) lightPalette(text string) string {
 		}
 		return result.String()
 	})
-	return base + painted + "\x1b[0m"
+	// A differential renderer may skip an unchanged blank row. Encode its
+	// palette explicitly so switching light/dark also repaints empty cells.
+	rows := strings.Split(painted, "\n")
+	for i, row := range rows {
+		rows[i] = base + row + "\x1b[0m"
+	}
+	return strings.Join(rows, "\n")
 }

@@ -399,6 +399,9 @@ func (m model) keyDialogContent() ([]string, []hit, int) {
 }
 
 func (m model) keyDialogHits() []hit {
+	if !m.usableViewport() {
+		return nil
+	}
 	rows, hits, width := m.keyDialogContent()
 	x, y := max(0, (m.w-width)/2), max(0, (m.h-len(rows)-2)/2)
 	var visible []hit

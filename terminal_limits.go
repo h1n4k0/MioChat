@@ -1,8 +1,8 @@
 package main
 
 const (
-	minTerminalWidth  = 20
-	minTerminalHeight = 10
+	minTerminalWidth  = 1
+	minTerminalHeight = 1
 	maxTerminalWidth  = 320
 	maxTerminalHeight = 120
 	maxTerminalCells  = maxTerminalWidth * maxTerminalHeight

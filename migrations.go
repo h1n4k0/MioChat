@@ -9,7 +9,7 @@ import (
 )
 
 const schemaVersion = 4
-const appVersion = "2.1.0"
+const appVersion = "2.1.1"
 
 // Additive database migrations preserve account credentials, message IDs and
 // existing SQL projections.

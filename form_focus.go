@@ -10,6 +10,7 @@ func (m model) formInput(field textinput.Model, width int) string {
 		prompt = m.color("> ", m.accent(), true)
 	}
 	field.Width = max(1, width-2)
+	field.SetCursor(field.Position())
 	return prompt + field.View()
 }
 

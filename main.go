@@ -153,8 +153,12 @@ func makeServerWithPolicy(store *Store, hub *Hub, signer gossh.Signer, policy ss
 			m.authenticatedSignal = state.authenticated
 		}
 		defer hub.Leave(m.client)
+		// SSH sessions are not local TTY files. Prime Bubble Tea's renderer
+		// explicitly before allowing a visible frame or deduplicating resizes.
+		m.awaitingTerminalSize = true
 		p := tea.NewProgram(m, tea.WithContext(s.Context()), tea.WithInput(sshSessionInput(s, closeSession)), tea.WithOutput(s), tea.WithAltScreen(), tea.WithMouseCellMotion())
 		go func() {
+			p.Send(tea.WindowSizeMsg{Width: initialWidth, Height: initialHeight})
 			lastWidth, lastHeight := initialWidth, initialHeight
 			var timer *time.Timer
 			var ready <-chan time.Time

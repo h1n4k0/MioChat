@@ -41,6 +41,7 @@ type model struct {
 	renderer                                  *lipgloss.Renderer
 	ip                                        string
 	w, h                                      int
+	awaitingTerminalSize                      bool
 	register, busy, logged, help, showSidebar bool
 	passFocus, helpOffset                     int
 	user                                      User
@@ -344,6 +345,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.WindowSizeMsg:
+		m.awaitingTerminalSize = false
 		width, height := normalizeTerminalSize(x.Width, x.Height)
 		if width == m.w && height == m.h {
 			return m, nil
@@ -351,9 +353,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.w, m.h = width, height
 		if m.composeKind != "" {
 			m.editor.SetWidth(max(10, m.w-6))
-			m.editor.SetHeight(max(4, m.h-9))
+			m.editor.SetHeight(max(1, m.h-7))
 		}
 		m.rebuild(false)
+		if m.panelTitle != "" {
+			m.keepPanelSelection()
+		}
 		return m, nil
 	case clockMsg:
 		m.frame++
@@ -682,7 +687,7 @@ func (m model) viewBase() string {
 	buttons := m.color(m.toolbarText(), accent, false)
 	top = ansi.Truncate(top, max(0, m.w-ansi.StringWidth(buttons)-1), "")
 	top += strings.Repeat(" ", max(0, m.w-ansi.StringWidth(top)-ansi.StringWidth(buttons))) + buttons
-	header := []string{m.color(strings.Repeat("━", m.w), "#344359", false), top, m.color("  "+room, accent, true) + m.color(fmt.Sprintf("    %s · %d 人在线", m.user.Name, len(m.online)), "#93A6BC", false)}
+	header := []string{m.color(strings.Repeat("━", m.w), "#344359", false), top, m.fitLine(m.color("  "+room, accent, true)+m.color(fmt.Sprintf("    %s · %d 人在线", m.user.Name, len(m.online)), "#93A6BC", false), m.w)}
 	topic := "单击用户卡片 · 双击戳 · 右键 @ / 回复"
 	if m.peer == "" {
 		for _, r := range m.rooms {

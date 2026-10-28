@@ -58,7 +58,7 @@ func (m *model) rebuild(bottom bool) {
 	_, width, height := m.dimensions()
 	m.view.Width = width
 	m.view.Height = height
-	m.input.Width = max(5, m.w-8)
+	m.reflowInputWidths()
 	m.segments = nil
 	if m.messageCache == nil {
 		m.messageCache = map[int64]cachedMessage{}
@@ -495,79 +495,58 @@ func (m *model) runAction(a panelAction) tea.Cmd {
 	return m.command(a.Command)
 }
 func (m model) panelScreen() string {
-	width, height := max(8, m.w-4), max(4, m.h-8)
-	var content []string
-	for _, line := range m.panelLines {
-		content = append(content, strings.Split(ansi.Hardwrap(line, width, true), "\n")...)
-	}
-	if len(content) > 0 {
-		content = append(content, "")
-	}
-	actions := m.filteredActions()
-	for i, a := range actions {
-		prefix := "  "
-		if i == m.panelSelected {
-			prefix = "> "
+	layout := m.panelLayout()
+	filter := m.panelFilter
+	filter.Width = max(1, m.w-4)
+	filter.SetCursor(filter.Position())
+	lines := []string{m.color(strings.Repeat("─", m.w), "#344359", false), m.fitLine(m.color(" "+m.panelTitle+"  [Esc 返回]", m.accent(), true), m.w), m.fitLine(" "+filter.View(), m.w), m.color(strings.Repeat("─", m.w), "#344359", false)}
+	for i := 0; i < layout.height; i++ {
+		index := layout.offset + i
+		line := ""
+		if index < len(layout.rows) {
+			line = layout.rows[index].text
 		}
-		content = append(content, m.color(prefix+a.Label, m.accent(), i == m.panelSelected))
-	}
-	start := min(m.panelOffset, max(0, len(content)-height))
-	end := min(len(content), start+height)
-	lines := []string{m.color(strings.Repeat("─", m.w), "#344359", false), m.fitLine(m.color(" "+m.panelTitle+"  [Esc 返回]", m.accent(), true), m.w), " " + m.panelFilter.View(), m.color(strings.Repeat("─", m.w), "#344359", false)}
-	for _, line := range content[start:end] {
-		lines = append(lines, "  "+m.fitLine(line, width))
-	}
-	for len(lines) < m.h-3 {
-		lines = append(lines, "")
+		lines = append(lines, "  "+line)
 	}
 	lines = append(lines, m.fitLine(" Enter 执行 · ↑↓ 选择 · 输入筛选 · 鼠标点击/滚轮", m.w))
 	return strings.Join(lines, "\n")
 }
 func (m model) panelHits() []hit {
-	_, _, height := m.dimensions()
-	_ = height
-	contentLines := 0
-	for _, line := range m.panelLines {
-		contentLines += len(strings.Split(ansi.Hardwrap(line, max(8, m.w-4), true), "\n"))
+	if !m.usableViewport() {
+		return nil
 	}
-	if contentLines > 0 {
-		contentLines++
-	}
+	layout := m.panelLayout()
 	var hits []hit
-	for i := range m.filteredActions() {
-		y := 4 + contentLines + i - min(m.panelOffset, m.panelMaxOffset())
-		if y >= 4 && y < m.h-4 {
-			hits = append(hits, hit{1, y, m.w - 2, 1, "panel", strconv.Itoa(i)})
+	for i := 0; i < layout.height && layout.offset+i < len(layout.rows); i++ {
+		if action := layout.rows[layout.offset+i].action; action >= 0 {
+			hits = append(hits, hit{2, 4 + i, layout.width, 1, "panel", strconv.Itoa(action)})
 		}
 	}
 	return hits
 }
 func (m model) panelMaxOffset() int {
-	lines := 0
-	for _, line := range m.panelLines {
-		lines += len(strings.Split(ansi.Hardwrap(line, max(8, m.w-4), true), "\n"))
-	}
-	if lines > 0 {
-		lines++
-	}
-	return max(0, lines+len(m.filteredActions())-max(4, m.h-8))
+	layout := m.panelLayout()
+	return max(0, len(layout.rows)-layout.height)
 }
 func (m *model) keepPanelSelection() {
-	prefix := 0
-	for _, line := range m.panelLines {
-		prefix += len(strings.Split(ansi.Hardwrap(line, max(8, m.w-4), true), "\n"))
+	layout := m.panelLayout()
+	first, last := -1, -1
+	for i, row := range layout.rows {
+		if row.action == m.panelSelected {
+			if first < 0 {
+				first = i
+			}
+			last = i
+		}
 	}
-	if prefix > 0 {
-		prefix++
+	if first >= 0 {
+		if first < layout.offset || last-first+1 > layout.height {
+			m.panelOffset = first
+		} else if last >= layout.offset+layout.height {
+			m.panelOffset = last - layout.height + 1
+		}
 	}
-	row := prefix + m.panelSelected
-	height := max(4, m.h-8)
-	if row < m.panelOffset {
-		m.panelOffset = row
-	} else if row >= m.panelOffset+height {
-		m.panelOffset = row - height + 1
-	}
-	m.panelOffset = min(m.panelOffset, m.panelMaxOffset())
+	m.panelOffset = max(0, min(m.panelOffset, max(0, len(layout.rows)-layout.height)))
 }
 func (m model) toolbarActions() []panelAction {
 	count := strconv.Itoa(m.noticeCount)
@@ -605,6 +584,9 @@ func (m model) toolbarHits() []hit {
 	return hits
 }
 func (m model) hits() []hit {
+	if !m.usableViewport() || m.awaitingTerminalSize {
+		return nil
+	}
 	if m.keyPrompt || m.keyForm != nil {
 		return m.keyDialogHits()
 	}
@@ -618,6 +600,10 @@ func (m model) hits() []hit {
 	if !m.logged || m.focus == 10 {
 		return m.hitsLegacy()
 	}
+	if m.composeKind != "" {
+		_, hits := m.composeControls()
+		return hits
+	}
 	if m.panelTitle != "" {
 		return m.panelHits()
 	}
@@ -630,8 +616,13 @@ func (m model) hits() []hit {
 	return hits
 }
 func (m model) View() string {
+	if m.awaitingTerminalSize {
+		return ""
+	}
 	var raw string
-	if m.emergencyDraft != nil {
+	if !m.usableViewport() {
+		raw = m.smallViewportView()
+	} else if m.emergencyDraft != nil {
 		// Async refreshes or delayed panels must not hide the persistence warning.
 		if m.panelKind != "emergency-draft" {
 			m.showEmergencyDraft()
@@ -651,12 +642,9 @@ func (m model) View() string {
 	if m.settings["ascii"] == "on" {
 		raw = strings.NewReplacer("─", "-", "━", "=", "│", "|", "↳", ">", "›", ">", "…", "~", "·", ".").Replace(raw)
 	}
+	raw = terminalFrame(raw, m.w, m.h)
 	if m.user.Theme == "light" {
-		rows := strings.Split(raw, "\n")
-		for i, line := range rows {
-			rows[i] = line + strings.Repeat(" ", max(0, m.w-ansi.StringWidth(line)))
-		}
-		raw = m.lightPalette(strings.Join(rows, "\n"))
+		raw = m.lightPalette(raw)
 	}
 	if m.bellPending != nil && m.bellPending.Swap(false) {
 		raw = "\a" + raw
@@ -664,6 +652,9 @@ func (m model) View() string {
 	return raw
 }
 func (m *model) mouseInteractions(x tea.MouseMsg) (bool, tea.Cmd) {
+	if !m.usableViewport() || m.awaitingTerminalSize {
+		return true, nil
+	}
 	if m.emergencyDraft != nil {
 		if m.panelKind != "emergency-draft" {
 			m.showEmergencyDraft()
@@ -791,6 +782,9 @@ func (m *model) mouseInteractions(x tea.MouseMsg) (bool, tea.Cmd) {
 	return false, nil
 }
 func (m *model) keyInteractions(x tea.KeyMsg) (bool, tea.Cmd) {
+	if !m.usableViewport() || m.awaitingTerminalSize {
+		return true, nil
+	}
 	if m.emergencyDraft != nil {
 		return true, m.emergencyDraftKey(x)
 	}

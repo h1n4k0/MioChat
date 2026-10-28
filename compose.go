@@ -59,7 +59,7 @@ func (m *model) startCompose(kind, title string) {
 	m.notice = ""
 	m.editor.SetValue(body)
 	m.editor.SetWidth(max(10, m.w-6))
-	m.editor.SetHeight(max(4, m.h-9))
+	m.editor.SetHeight(max(1, m.h-7))
 	m.editor.Focus()
 }
 func (m model) composeView() string {
@@ -75,19 +75,25 @@ func (m model) composeView() string {
 		mode = "发布已暂停"
 	}
 	lines := []string{m.fitLine(m.color(" MIOCHAT / "+title+" / "+mode+" / #"+m.composeRoom, m.accent(), true), m.w), m.fitLine(" 标题："+m.composeTitle, m.w), m.color(strings.Repeat("─", m.w), "#344359", false)}
+	bodyHeight := max(1, m.h-7)
 	if m.composePreview {
 		body := m.editor.Value()
 		if safe, e := multiline(body, m.composeKind == "art"); e == nil {
 			body = safe
 		}
 		rows := strings.Split(ansi.Hardwrap(body, max(8, m.w-4), true), "\n")
-		for _, row := range rows[:min(len(rows), max(4, m.h-8))] {
+		for _, row := range rows[:min(len(rows), bodyHeight)] {
 			lines = append(lines, "  "+row)
 		}
 	} else {
-		lines = append(lines, m.editor.View())
+		rows := strings.Split(m.editor.View(), "\n")
+		lines = append(lines, rows[:min(len(rows), bodyHeight)]...)
 	}
-	lines = append(lines, "", m.color(" [F2 预览/编辑]  [F4 发布]  [Esc 取消]", m.accent(), false), m.fitLine(" "+m.notice, m.w))
+	for len(lines) < m.h-3 {
+		lines = append(lines, "")
+	}
+	controls, _ := m.composeControls()
+	lines = append(lines, controls, m.fitLine(" "+m.notice, m.w))
 	return strings.Join(lines, "\n")
 }
 func (m *model) composeKey(x tea.KeyMsg) tea.Cmd {
@@ -170,15 +176,20 @@ func (m *model) saveCompositionDraft() error {
 	return err
 }
 func (m *model) composeMouse(x tea.MouseMsg) (bool, tea.Cmd) {
-	if x.Action == tea.MouseActionPress && x.Button == tea.MouseButtonLeft && x.Y >= m.h-5 {
-		switch {
-		case x.X < 20:
-			return true, m.composeKey(tea.KeyMsg{Type: tea.KeyF2})
-		case x.X < 35:
-			return true, m.composeKey(tea.KeyMsg{Type: tea.KeyF4})
-		default:
-			return true, m.composeKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if !m.usableViewport() {
+		return true, nil
+	}
+	if x.Action == tea.MouseActionPress && x.Button == tea.MouseButtonLeft {
+		_, buttons := m.composeControls()
+		for _, button := range buttons {
+			if x.Y == button.y && x.X >= button.x && x.X < button.x+button.w {
+				key := map[string]tea.KeyType{"f2": tea.KeyF2, "f4": tea.KeyF4, "esc": tea.KeyEsc}[button.value]
+				return true, m.composeKey(tea.KeyMsg{Type: key})
+			}
 		}
+	}
+	if x.Y < 3 || x.Y >= 3+max(1, m.h-7) {
+		return true, nil
 	}
 	var cmd tea.Cmd
 	m.editor, cmd = m.editor.Update(x)
