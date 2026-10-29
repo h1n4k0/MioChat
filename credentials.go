@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"database/sql"
@@ -104,7 +105,21 @@ func (s *Store) ChangePasswordForSession(name, old, next, sessionID string) erro
 	return s.changePassword(name, old, next, sessionID)
 }
 
+// GUI operations bind the credential transaction to the SSH connection. Hashing
+// is bounded but not interruptible; cancellation is rechecked before commit.
+func (s *Store) ChangePasswordForSessionContext(ctx context.Context, name, old, next, sessionID string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return errCredentialsChanged
+	}
+	return s.changePasswordContext(ctx, name, old, next, sessionID)
+}
 func (s *Store) changePassword(name, old, next, sessionID string) error {
+	return s.changePasswordContext(context.Background(), name, old, next, sessionID)
+}
+func (s *Store) changePasswordContext(ctx context.Context, name, old, next, sessionID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if utf8.RuneCountInString(next) < 10 || len(next) > 256 {
 		return errors.New("新密码至少 10 个字符，且不超过 256 字节")
 	}
@@ -112,21 +127,30 @@ func (s *Store) changePassword(name, old, next, sessionID string) error {
 	if err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	salt := make([]byte, 16)
 	if _, err = rand.Read(salt); err != nil {
 		return err
 	}
 	hash := passwordHash(next, salt)
-	return s.commitPasswordChange(proof, hash, salt, sessionID)
+	return s.commitPasswordChangeContext(ctx, proof, hash, salt, sessionID)
 }
 
 // The proof and replacement hash are prepared outside this short transaction.
 // A reset or competing change invalidates the proof before any state is changed.
 func (s *Store) commitPasswordChange(proof passwordProof, hash, salt []byte, sessionID string) error {
+	return s.commitPasswordChangeContext(context.Background(), proof, hash, salt, sessionID)
+}
+func (s *Store) commitPasswordChangeContext(ctx context.Context, proof passwordProof, hash, salt []byte, sessionID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if proof.epoch < 0 || proof.epoch == math.MaxInt64 {
 		return errCredentialsChanged
 	}
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -166,6 +190,9 @@ func (s *Store) commitPasswordChange(proof passwordProof, hash, salt []byte, ses
 		}
 	}
 	if err = auditQ(tx, proof.name, "password.change", proof.name, "", ""); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return tx.Commit()

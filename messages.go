@@ -49,6 +49,9 @@ func messageQ(q queryer, id int64) (Message, error) {
 	return m, e
 }
 func visibleMessageQ(q queryer, user string, m Message) bool {
+	if m.Kind == "attachment" && !attachmentMessageIdentityQ(q, user, m.ID) {
+		return false
+	}
 	if m.Recipient != "" {
 		return m.Sender == user || m.Recipient == user
 	}
@@ -71,6 +74,7 @@ func (s *Store) decorate(messages []Message, user string) {
 			messages[i].Body = "[暂时无法加载消息状态，请刷新历史]"
 			messages[i].ReplyBody = ""
 			messages[i].ReplyName = ""
+			messages[i].Attachment = nil
 		}
 	}
 }
@@ -86,7 +90,7 @@ func (s *Store) decorateContext(ctx context.Context, messages []Message, user st
 	marks := strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")
 	metadata := map[int64]Message{}
 	parents := map[int64]bool{}
-	if rows, e := s.readDB().QueryContext(ctx, `SELECT m.id,CASE WHEN COALESCE(x.recalled,0)>0 THEN '[消息已撤回]' ELSE m.body END,COALESCE(x.reply_to,0),COALESCE(x.edited,0),COALESCE(x.recalled,0),COALESCE(x.recaller,'') FROM messages m LEFT JOIN message_meta x ON x.id=m.id WHERE m.id IN (`+marks+`)`, args...); e == nil {
+	if rows, e := s.readQueryContext(ctx, `SELECT m.id,CASE WHEN COALESCE(x.recalled,0)>0 THEN '[消息已撤回]' ELSE m.body END,COALESCE(x.reply_to,0),COALESCE(x.edited,0),COALESCE(x.recalled,0),COALESCE(x.recaller,'') FROM messages m LEFT JOIN message_meta x ON x.id=m.id WHERE m.id IN (`+marks+`)`, args...); e == nil {
 		for rows.Next() {
 			var m Message
 			if e = rows.Scan(&m.ID, &m.Body, &m.ReplyTo, &m.Edited, &m.Recalled, &m.Recaller); e != nil {
@@ -107,7 +111,7 @@ func (s *Store) decorateContext(ctx context.Context, messages []Message, user st
 		return e
 	}
 	summaries := map[int64][]string{}
-	if rows, e := s.readDB().QueryContext(ctx, `SELECT message_id,reaction,count(*) FROM reactions WHERE message_id IN (`+marks+`) GROUP BY message_id,reaction ORDER BY reaction`, args...); e == nil {
+	if rows, e := s.readQueryContext(ctx, `SELECT message_id,reaction,count(*) FROM reactions WHERE message_id IN (`+marks+`) GROUP BY message_id,reaction ORDER BY reaction`, args...); e == nil {
 		for rows.Next() {
 			var id, count int64
 			var reaction string
@@ -132,10 +136,10 @@ func (s *Store) decorateContext(ctx context.Context, messages []Message, user st
 			values = append(values, id)
 		}
 		tokens := strings.TrimSuffix(strings.Repeat("?,", len(values)), ",")
-		values = append(values, user, user, user, user)
+		values = append(values, user, user, user, user, user)
 		// Resolve every parent with the current viewer's ACL in one statement,
 		// rather than issuing one room/member query per quoted message.
-		if rows, e := s.readDB().QueryContext(ctx, `SELECT m.id,m.room,m.sender,m.recipient,CASE WHEN COALESCE(x.recalled,0)>0 THEN '[消息已撤回]' ELSE m.body END,m.kind,m.at FROM messages m LEFT JOIN message_meta x ON x.id=m.id WHERE m.id IN (`+tokens+`) AND ((m.recipient!='' AND (m.sender=? OR m.recipient=?)) OR (m.recipient='' AND EXISTS(SELECT 1 FROM rooms r LEFT JOIN room_meta rm ON rm.name=r.name WHERE r.name=m.room AND (COALESCE(rm.private,0)=0 OR r.owner=? OR EXISTS(SELECT 1 FROM members a WHERE a.room=r.name AND a.user=?)))))`, values...); e == nil {
+		if rows, e := s.readQueryContext(ctx, `SELECT m.id,m.room,m.sender,m.recipient,CASE WHEN COALESCE(x.recalled,0)>0 THEN '[消息已撤回]' ELSE m.body END,m.kind,m.at FROM messages m LEFT JOIN message_meta x ON x.id=m.id WHERE m.id IN (`+tokens+`) AND ((m.recipient!='' AND (m.sender=? OR m.recipient=?)) OR (m.recipient='' AND EXISTS(SELECT 1 FROM rooms r LEFT JOIN room_meta rm ON rm.name=r.name WHERE r.name=m.room AND (COALESCE(rm.private,0)=0 OR r.owner=? OR EXISTS(SELECT 1 FROM members a WHERE a.room=r.name AND a.user=?))))) AND `+attachmentMessageIdentitySQL, values...); e == nil {
 			items, e := scanMessages(rows)
 			if e != nil {
 				return e
@@ -165,23 +169,43 @@ func (s *Store) decorateContext(ctx context.Context, messages []Message, user st
 			m.ReplyBody = cleanText(source.Body, 70)
 		}
 	}
-	return nil
+	return s.decorateAttachmentsContext(ctx, messages, user)
 }
-func blockedQ(q queryer, owner, target string) bool {
+func blockedPolicyQ(q queryer, owner, target string) (bool, error) {
 	var n int
-	_ = q.QueryRow(`SELECT count(*) FROM relations WHERE owner=? AND target=? AND kind='block'`, owner, target).Scan(&n)
-	return n > 0
+	err := q.QueryRow(`SELECT count(*) FROM relations WHERE owner=? AND target=? AND kind='block'`, owner, target).Scan(&n)
+	return n > 0, err
+}
+
+// Boolean consumers must deny delivery on an unknown policy, never treat a
+// failed read as proof that another account accepts contact.
+func blockedQ(q queryer, owner, target string) bool {
+	blocked, err := blockedPolicyQ(q, owner, target)
+	return err != nil || blocked
 }
 func notifyQ(q queryer, user, kind, actor string, ref int64, body string) error {
-	if actor == user || blockedQ(q, user, actor) {
+	if actor == user {
+		return nil
+	}
+	blocked, err := blockedPolicyQ(q, user, actor)
+	if err != nil {
+		return errors.New("暂时无法核验通知接收策略")
+	}
+	if blocked {
 		return nil
 	}
 	if ref > 0 {
 		var room string
-		_ = q.QueryRow(`SELECT room FROM messages WHERE id=?`, ref).Scan(&room)
+		err := q.QueryRow(`SELECT room FROM messages WHERE id=?`, ref).Scan(&room)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return errors.New("暂时无法核验通知来源范围")
+		}
 		if room != "" {
 			var muted bool
-			_ = q.QueryRow(`SELECT muted FROM preferences WHERE user=? AND scope=?`, user, "room:"+room).Scan(&muted)
+			err := q.QueryRow(`SELECT muted FROM preferences WHERE user=? AND scope=?`, user, "room:"+room).Scan(&muted)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return errors.New("暂时无法核验通知免打扰策略")
+			}
 			if muted {
 				return nil
 			}
@@ -190,28 +214,39 @@ func notifyQ(q queryer, user, kind, actor string, ref int64, body string) error 
 	_, e := q.Exec(`INSERT INTO notifications(user,kind,actor,ref,body,at) SELECT name,?,?,?,?,? FROM users WHERE name=?`, kind, actor, ref, cleanText(body, 180), time.Now().Unix(), user)
 	return e
 }
-func activeSanctionQ(q queryer, kind, user, room string) bool {
+func activeSanctionQ(q queryer, kind, user, room string) (bool, error) {
 	var n int
-	_ = q.QueryRow(`SELECT count(*) FROM sanctions WHERE kind=? AND target=? AND (room='' OR room=?) AND revoked=0 AND (expires=0 OR expires>?)`, kind, user, room, time.Now().Unix()).Scan(&n)
-	return n > 0
+	err := q.QueryRow(`SELECT count(*) FROM sanctions WHERE kind=? AND target=? AND (room='' OR room=?) AND revoked=0 AND (expires=0 OR expires>?)`, kind, user, room, time.Now().Unix()).Scan(&n)
+	return n > 0, err
 }
 func canSendQ(q queryer, user, room, recipient string) error {
 	u, e := userQ(q, user)
 	if e != nil {
 		return errors.New("账户不存在")
 	}
-	if u.Banned || activeSanctionQ(q, "user", user, "") {
+	banned, err := activeSanctionQ(q, "user", user, "")
+	if err != nil {
+		return errors.New("暂时无法核验账户封禁策略")
+	}
+	if u.Banned || banned {
 		return errors.New("账户已被封禁")
 	}
 	if u.MustReset {
 		return errors.New("请先使用 /passwd 修改临时密码")
 	}
 	var maintenance string
-	_ = q.QueryRow(`SELECT value FROM config WHERE key='maintenance'`).Scan(&maintenance)
+	err = q.QueryRow(`SELECT value FROM config WHERE key='maintenance'`).Scan(&maintenance)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return errors.New("暂时无法核验维护策略")
+	}
 	if maintenance == "on" && !isAdmin(u.Role) {
 		return errors.New("聊天室维护中，暂时不能发言")
 	}
-	if activeSanctionQ(q, "mute", user, room) {
+	muted, err := activeSanctionQ(q, "mute", user, room)
+	if err != nil {
+		return errors.New("暂时无法核验禁言策略")
+	}
+	if muted {
 		return errors.New("你当前处于禁言状态")
 	}
 	if recipient != "" {
@@ -222,17 +257,18 @@ func canSendQ(q queryer, user, room, recipient string) error {
 		if e != nil || other.Banned {
 			return errors.New("对方账户不可用")
 		}
-		if blockedQ(q, recipient, user) {
+		blocked, err := blockedPolicyQ(q, recipient, user)
+		if err != nil {
+			return errors.New("暂时无法核验私信接收策略")
+		}
+		if blocked {
 			return errors.New("对方不接受私信")
 		}
 		return nil
 	}
-	if !canReadQ(q, user, room) {
-		return errors.New("你没有频道权限")
-	}
 	r, e := roomQ(q, room)
-	if e != nil {
-		return e
+	if e != nil || !canReadRoomQ(q, user, r) {
+		return errors.New("你没有频道权限")
 	}
 	if r.Archived {
 		return errors.New("频道已归档，仅可阅读")
@@ -242,7 +278,9 @@ func canSendQ(q queryer, user, room, recipient string) error {
 	}
 	if r.Slow > 0 && !canManageQ(q, user, room) {
 		var last int64
-		_ = q.QueryRow(`SELECT COALESCE(max(at),0) FROM messages WHERE room=? AND sender=? AND recipient=''`, room, user).Scan(&last)
+		if err := q.QueryRow(`SELECT COALESCE(max(at),0) FROM messages WHERE room=? AND sender=? AND recipient=''`, room, user).Scan(&last); err != nil {
+			return errors.New("暂时无法核验频道慢速策略")
+		}
 		if time.Now().Unix()-last < int64(r.Slow) {
 			return fmt.Errorf("慢速模式：每 %d 秒可发一条", r.Slow)
 		}
@@ -250,6 +288,19 @@ func canSendQ(q queryer, user, room, recipient string) error {
 	return nil
 }
 func (s *Store) Send(m Message) (Message, error) {
+	return s.sendContext(context.Background(), m, "")
+}
+
+// Native sends recheck the durable connection inside the same transaction as
+// message/notification writes. The terminal Send entry retains its contract.
+func (s *Store) SendForSessionContext(ctx context.Context, m Message, sessionID string) (Message, error) {
+	if ctx == nil || sessionID == "" {
+		return m, errCredentialsChanged
+	}
+	return s.sendContext(ctx, m, sessionID)
+}
+
+func (s *Store) sendContext(ctx context.Context, m Message, sessionID string) (Message, error) {
 	m.Sender = accountKey(m.Sender)
 	m.Body = cleanText(m.Body, 800)
 	m.At = time.Now().Unix()
@@ -259,11 +310,16 @@ func (s *Store) Send(m Message) (Message, error) {
 	if m.Kind != "chat" && m.Kind != "action" {
 		return m, errors.New("未知消息类型")
 	}
-	tx, e := s.db.Begin()
+	tx, e := s.db.BeginTx(ctx, nil)
 	if e != nil {
 		return m, e
 	}
 	defer tx.Rollback()
+	if sessionID != "" {
+		if valid, err := sessionCurrentQ(tx, sessionID, m.Sender); err != nil || !valid {
+			return m, errCredentialsChanged
+		}
+	}
 	if e = canSendQ(tx, m.Sender, m.Room, m.Recipient); e != nil {
 		return m, e
 	}
@@ -284,14 +340,14 @@ func (s *Store) Send(m Message) (Message, error) {
 		}
 	}
 	r, e := tx.Exec(`INSERT INTO messages(room,sender,recipient,body,kind,at) VALUES(?,?,?,?,?,?)`, m.Room, m.Sender, m.Recipient, m.Body, m.Kind, m.At)
-	if e != nil {
+	if e = dotOne(r, e); e != nil {
 		return m, e
 	}
 	m.ID, e = r.LastInsertId()
 	if e != nil {
 		return m, e
 	}
-	if _, e = tx.Exec(`INSERT INTO message_meta(id,reply_to) VALUES(?,?)`, m.ID, m.ReplyTo); e != nil {
+	if e = dotOne(tx.Exec(`INSERT INTO message_meta(id,reply_to) VALUES(?,?)`, m.ID, m.ReplyTo)); e != nil {
 		return m, e
 	}
 	if m.Recipient != "" {
@@ -321,6 +377,9 @@ func (s *Store) Send(m Message) (Message, error) {
 			return m, e
 		}
 	}
+	if e = dotCaptureSourceQ(tx, m); e != nil {
+		return m, e
+	}
 	if e = tx.Commit(); e != nil {
 		return m, e
 	}
@@ -329,20 +388,43 @@ func (s *Store) Send(m Message) (Message, error) {
 	return messages[0], nil
 }
 func (s *Store) UpdateMessage(actor string, id int64, body string, recall bool) error {
-	tx, e := s.db.Begin()
+	return s.updateMessageContext(context.Background(), actor, "", "", id, body, recall)
+}
+
+func (s *Store) UpdateMessageForSessionContext(ctx context.Context, actor, sessionID, scope string, id int64, body string, recall bool) error {
+	if ctx == nil || sessionID == "" || scope == "" {
+		return errCredentialsChanged
+	}
+	return s.updateMessageContext(ctx, actor, sessionID, scope, id, body, recall)
+}
+func (s *Store) updateMessageContext(ctx context.Context, actor, sessionID, scope string, id int64, body string, recall bool) error {
+	tx, e := s.db.BeginTx(ctx, nil)
 	if e != nil {
 		return e
 	}
 	defer tx.Rollback()
-	m, e := messageQ(tx, id)
-	if e != nil || !visibleMessageQ(tx, actor, m) {
+	q := scopedQuery{ctx: ctx, db: tx}
+	if sessionID != "" {
+		if valid, err := sessionCurrentQ(q, sessionID, actor); err != nil || !valid {
+			return errCredentialsChanged
+		}
+	}
+	m, e := messageQ(q, id)
+	if e != nil || !visibleMessageQ(q, actor, m) {
 		return errors.New("消息不存在或没有权限")
 	}
-	u, e := userQ(tx, actor)
+	if scope != "" && guiScopeForMessage(m, actor).key() != scope {
+		return errors.New("消息不在原对话中")
+	}
+	u, e := mutationActorQ(q, actor)
 	if e != nil {
 		return e
 	}
-	if u.Banned || activeSanctionQ(tx, "user", actor, "") {
+	banned, err := activeSanctionQ(q, "user", actor, "")
+	if err != nil {
+		return errors.New("暂时无法核验账户封禁策略")
+	}
+	if u.Banned || banned {
 		return errors.New("账户已被封禁")
 	}
 	if m.Recalled > 0 {
@@ -350,7 +432,7 @@ func (s *Store) UpdateMessage(actor string, id int64, body string, recall bool) 
 	}
 	own := m.Sender == actor
 	if !own {
-		if !recall || m.Recipient != "" || !canManageQ(tx, actor, m.Room) {
+		if !recall || m.Recipient != "" || !canManageQ(q, actor, m.Room) {
 			return errors.New("不能修改他人消息")
 		}
 	} else if !isAdmin(u.Role) && time.Now().Unix()-m.At > 300 {
@@ -366,25 +448,29 @@ func (s *Store) UpdateMessage(actor string, id int64, body string, recall bool) 
 			return errors.New("消息不能为空")
 		}
 	}
-	if _, e = tx.Exec(`INSERT INTO revisions(message_id,actor,action,body,at) VALUES(?,?,?,?,?)`, id, actor, action, m.Body, time.Now().Unix()); e != nil {
+	if e = changedOne(q.Exec(`INSERT INTO revisions(message_id,actor,action,body,at) VALUES(?,?,?,?,?)`, id, actor, action, m.Body, time.Now().Unix())); e != nil {
 		return e
 	}
-	if _, e = tx.Exec(`UPDATE messages SET body=? WHERE id=?`, body, id); e != nil {
+	if e = changedOne(q.Exec(`UPDATE messages SET body=? WHERE id=?`, body, id)); e != nil {
 		return e
 	}
-	if _, e = tx.Exec(`INSERT OR IGNORE INTO message_meta(id) VALUES(?)`, id); e != nil {
+	if _, e = q.Exec(`INSERT OR IGNORE INTO message_meta(id) VALUES(?)`, id); e != nil {
 		return e
 	}
 	if recall {
-		_, e = tx.Exec(`UPDATE message_meta SET recalled=?,recaller=? WHERE id=?`, time.Now().Unix(), actor, id)
+		e = changedOne(q.Exec(`UPDATE message_meta SET recalled=?,recaller=? WHERE id=?`, time.Now().Unix(), actor, id))
 	} else {
-		_, e = tx.Exec(`UPDATE message_meta SET edited=? WHERE id=?`, time.Now().Unix(), id)
+		e = changedOne(q.Exec(`UPDATE message_meta SET edited=? WHERE id=?`, time.Now().Unix(), id))
 	}
 	if e != nil {
 		return e
 	}
-	if e = auditQ(tx, actor, "message."+action, strconv.FormatInt(id, 10), "", m.Room); e != nil {
+	if e = auditQ(q, actor, "message."+action, strconv.FormatInt(id, 10), "", m.Room); e != nil {
 		return e
+	}
+	saved, err := messageQ(q, id)
+	if err != nil || saved.Body != body || (recall && saved.Recalled == 0) || (!recall && saved.Edited == 0) {
+		return errors.New("消息更新未完成")
 	}
 	return tx.Commit()
 }
@@ -527,7 +613,7 @@ func (s *Store) pageMessages(room, user, peer string, cursor int64, limit int, f
 		query, args = directMessagePageQuery(user, peer, cursor, limit, forward)
 	} else {
 		var allowed bool
-		if err := s.readDB().QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM rooms r LEFT JOIN room_meta m ON m.name=r.name WHERE r.name=? AND (COALESCE(m.private,0)=0 OR r.owner=? OR EXISTS(SELECT 1 FROM members a WHERE a.room=r.name AND a.user=?)))`, room, user, user).Scan(&allowed); err != nil {
+		if err := s.readRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM rooms r LEFT JOIN room_meta m ON m.name=r.name WHERE r.name=? AND (COALESCE(m.private,0)=0 OR r.owner=? OR EXISTS(SELECT 1 FROM members a WHERE a.room=r.name AND a.user=?)))`, room, user, user).Scan(&allowed); err != nil {
 			return nil, err
 		}
 		if !allowed {
@@ -543,7 +629,7 @@ func (s *Store) pageMessages(room, user, peer string, cursor int64, limit int, f
 		query = `SELECT ` + messageColumns + ` FROM messages WHERE ` + where + ` AND id` + comparison + `? ORDER BY id ` + order + ` LIMIT ?`
 		args = append(args, cursor, limit)
 	}
-	rows, e := s.readDB().QueryContext(ctx, query, args...)
+	rows, e := s.readQueryContext(ctx, query, args...)
 	if e != nil {
 		return nil, e
 	}
@@ -684,38 +770,8 @@ func (s *Store) UnreadNotifications(user string) int {
 	return n
 }
 func (s *Store) Poke(actor, target string) error {
-	u, e := s.Resolve(target)
-	if e != nil {
-		return e
-	}
-	target = u.Name
-	if target == actor {
-		return errors.New("不能戳自己")
-	}
-	if s.Blocked(target, actor) {
-		return errors.New("对方不接受戳一戳")
-	}
-	prefs := s.Settings(target)
-	if prefs["poke"] == "off" || prefs["dnd"] == "on" {
-		return errors.New("对方当前不接受戳一戳")
-	}
-	tx, e := s.db.Begin()
-	if e != nil {
-		return e
-	}
-	defer tx.Rollback()
-	var last int64
-	_ = tx.QueryRow(`SELECT at FROM poke_limits WHERE actor=? AND target=?`, actor, target).Scan(&last)
-	if time.Now().Unix()-last < 30 {
-		return errors.New("同一用户每 30 秒只能戳一次")
-	}
-	if _, e = tx.Exec(`INSERT INTO poke_limits VALUES(?,?,?) ON CONFLICT(actor,target) DO UPDATE SET at=excluded.at`, actor, target, time.Now().Unix()); e != nil {
-		return e
-	}
-	if e = notifyQ(tx, target, "poke", actor, 0, "戳了戳你"); e != nil {
-		return e
-	}
-	return tx.Commit()
+	_, err := s.pokeForSession(actor, target, "")
+	return err
 }
 
 type Position struct {
@@ -785,7 +841,7 @@ func (s *Store) SavePositionVersioned(user, scope string, p Position) (int64, er
 		if count != 1 {
 			return ErrPositionConflict
 		}
-		return changedOne(tx.Exec(`INSERT INTO preferences(user,scope,last_read,offset,draft,reply_to,anchor) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user,scope) DO UPDATE SET last_read=max(preferences.last_read,excluded.last_read),offset=excluded.offset,draft=excluded.draft,reply_to=excluded.reply_to,anchor=excluded.anchor`, user, scope, p.LastRead, max(0, p.Offset), cleanText(p.Draft, 1600), p.ReplyTo, p.Anchor))
+		return changedOne(tx.Exec(`INSERT INTO preferences(user,scope,last_read,offset,draft,reply_to,anchor) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user,scope) DO UPDATE SET last_read=max(preferences.last_read,excluded.last_read),offset=excluded.offset,draft=excluded.draft,reply_to=excluded.reply_to,anchor=excluded.anchor`, user, scope, p.LastRead, max(0, p.Offset), cleanPositionDraft(p.Draft), p.ReplyTo, p.Anchor))
 	})
 	if err != nil {
 		return p.Version, err

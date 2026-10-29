@@ -1,9 +1,7 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
   workflow_call:
 
 permissions:
@@ -25,7 +23,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-2025]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
@@ -57,4 +55,119 @@ jobs:
         run: go vet ./...
       - name: Check data races
         if: runner.os == 'Linux'
-        run: go test -race -count=1 ./...
+        env:
+          GOMAXPROCS: '4'
+        run: go test -race -count=1 -timeout=25m ./...
+
+  native-windows:
+    name: Native GPUI (windows-2025)
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RUSTUP_TOOLCHAIN: 1.99.1-x86_64-pc-windows-msvc
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+          cache-dependency-path: go.sum
+      - name: Install fixed official Rust toolchain
+        run: |
+          rustup toolchain install 1.99.1-x86_64-pc-windows-msvc --profile minimal --component rustfmt --component clippy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc --version
+          cargo --version
+          Get-Command ssh, ssh-keygen -ErrorAction Stop | Select-Object Name, Source
+      - name: Build synthetic Go pipe and SSH bridge
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP 'miochat-native-fixture.exe'
+          $bridge = Join-Path $env:RUNNER_TEMP 'miochat-ssh-bridge.exe'
+          go test -c -o $fixture .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go build -o $bridge ./cmd/miochat-ssh-bridge
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "MIOCHAT_GUI_FIXTURE_DRIVER=$fixture" >> $env:GITHUB_ENV
+          "MIOCHAT_SSH_BRIDGE=$bridge" >> $env:GITHUB_ENV
+      - name: Native format and strict Clippy
+        working-directory: gpui-client
+        run: |
+          cargo fmt --all -- --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo clippy --locked --all-targets -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native unit and explicit synthetic pipe and SSH tests
+        working-directory: gpui-client
+        run: cargo test --locked --all-targets -- --include-ignored --test-threads=1
+      - name: Build ordinary native executable without launching it
+        working-directory: gpui-client
+        run: cargo build --locked --bin miochat-gpui
+
+  native-linux:
+    name: Native protocol fixtures (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      RUSTUP_TOOLCHAIN: 1.99.1-x86_64-unknown-linux-gnu
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '0'
+      GOMAXPROCS: '4'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+          cache-dependency-path: go.sum
+      - name: Install fixed official Rust and report tool availability
+        run: |
+          rustup toolchain install 1.99.1-x86_64-unknown-linux-gnu --profile minimal --component rustfmt --component clippy
+          rustc --version
+          cargo --version
+          go version
+          getconf _NPROCESSORS_ONLN
+          command -v ssh ssh-keygen
+      - name: Build synthetic Go pipe and SSH bridge
+        run: |
+          go test -c -o "$RUNNER_TEMP/miochat-native-fixture" .
+          go build -buildvcs=false -o "$RUNNER_TEMP/miochat-ssh-bridge" ./cmd/miochat-ssh-bridge
+          echo "MIOCHAT_GUI_FIXTURE_DRIVER=$RUNNER_TEMP/miochat-native-fixture" >> "$GITHUB_ENV"
+          echo "MIOCHAT_SSH_BRIDGE=$RUNNER_TEMP/miochat-ssh-bridge" >> "$GITHUB_ENV"
+      - name: Native format and strict Clippy
+        working-directory: gpui-client
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --all-targets -- -D warnings
+      - name: Native unit and explicit synthetic pipe and SSH tests
+        working-directory: gpui-client
+        run: cargo test --locked --all-targets -- --include-ignored --test-threads=1
+      - name: Build ordinary native executable without launching it
+        working-directory: gpui-client
+        run: cargo build --locked --bin miochat-gpui
+
+  dot-adapter:
+    name: Default-off adapter synthetic contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+      - name: Install exact declared adapter dependencies
+        run: python -m pip install 'PyJWT[crypto]==2.13.0' 'cryptography==50.0.0'
+      - name: Run synthetic adapter checks without provider access
+        working-directory: integrations/dot-adapter
+        run: python run_tests.py

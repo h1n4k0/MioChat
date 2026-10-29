@@ -117,9 +117,11 @@ func (m *model) command(line string) tea.Cmd {
 	if m.logged {
 		u, valid := m.hub.RefreshClient(m.client)
 		if !valid {
+			m.closePanel()
 			return nil
 		}
 		m.user = u
+		m.revalidateSecretPanel(time.Now(), true)
 		if u.MustReset && line != "/passwd" && line != "/quit" && line != "/logout" && line != "/exit" {
 			m.note("请先使用 /passwd 修改临时密码")
 			return nil
@@ -149,6 +151,7 @@ func (m *model) command(line string) tea.Cmd {
 	var err error
 	switch cmd {
 	case "/quit", "/exit", "/logout":
+		m.closePanel()
 		return tea.Quit
 	case "/join":
 		if arg == "" {
@@ -233,6 +236,7 @@ func (m *model) command(line string) tea.Cmd {
 			m.note("已设置离开状态")
 		}
 	case "/passwd":
+		m.closePanel()
 		m.focus = 10
 		m.passFocus = 0
 		m.notice = ""

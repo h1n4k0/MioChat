@@ -23,7 +23,7 @@ func (s *Store) SaveConflictDraft(user, scope, sessionID string, p Position) err
 		if err := tx.QueryRow(`SELECT user FROM sessions WHERE id=?`, sessionID).Scan(&owner); err != nil || owner != user {
 			return errors.New("草稿会话不属于当前账户")
 		}
-		return changedOne(tx.Exec(`INSERT INTO draft_conflicts(user,scope,session_id,draft,reply_to,version,updated) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user,scope,session_id) DO UPDATE SET draft=excluded.draft,reply_to=excluded.reply_to,version=excluded.version,updated=excluded.updated`, user, scope, sessionID, cleanText(p.Draft, 1600), p.ReplyTo, p.Version, time.Now().Unix()))
+		return changedOne(tx.Exec(`INSERT INTO draft_conflicts(user,scope,session_id,draft,reply_to,version,updated) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user,scope,session_id) DO UPDATE SET draft=excluded.draft,reply_to=excluded.reply_to,version=excluded.version,updated=excluded.updated`, user, scope, sessionID, cleanPositionDraft(p.Draft), p.ReplyTo, p.Version, time.Now().Unix()))
 	})
 }
 

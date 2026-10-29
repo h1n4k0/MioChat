@@ -1,22 +1,21 @@
 package main
 
 import (
+	tea "github.com/charmbracelet/bubbletea"
 	"strings"
-
-	"github.com/charmbracelet/x/ansi"
 )
 
+// Projection uses the same wrapped controls as composeView and composeMouse.
+// The upstream bounded-frame fix must not remove CAS conflict/discard actions.
 func (m model) composeControls() (string, []hit) {
-	x, y := 1, max(0, m.h-3)
-	var labels []string
+	rows, controls := compositionControlLayout(m.w)
+	firstY := m.h - len(rows) - 1
 	var hits []hit
-	for _, button := range []struct{ label, key string }{{"[F2 预览/编辑]", "f2"}, {"[F4 发布]", "f4"}, {"[Esc 取消]", "esc"}} {
-		width := ansi.StringWidth(button.label)
-		labels = append(labels, button.label)
-		if visible := min(width, m.w-x); visible > 0 && y < m.h {
-			hits = append(hits, hit{x, y, visible, 1, "compose", button.key})
+	for _, control := range controls {
+		y := firstY + control.y
+		if width := min(control.width, m.w-control.x); width > 0 && y >= 0 && y < m.h {
+			hits = append(hits, hit{control.x, y, width, 1, "compose", (tea.KeyMsg{Type: control.key}).String()})
 		}
-		x += width + 2
 	}
-	return m.fitLine(m.color(" "+strings.Join(labels, "  "), m.accent(), false), m.w), hits
+	return m.color(strings.Join(rows, "\n"), m.accent(), false), hits
 }

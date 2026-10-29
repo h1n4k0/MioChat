@@ -37,10 +37,9 @@ ssh -t -p 2222 chat@example.com
 
 ```sh
 ssh-keygen -t ed25519
-ssh -t -p 2222 -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes chat@example.com
 ```
 
-也可用 `ssh-keygen -t ecdsa -b 256` 或 `ssh-keygen -t rsa -b 3072`，连接时选择对应私钥路径。
+也可使用 ECDSA 或 RSA 设备身份。连接时在 SSH 客户端中显式选择用于签名的身份；本恢复备份不记录实际身份文件位置。
 
 首次携带未绑定密钥连接，先用聊天室账号密码登录，再确认绑定当前设备的指纹和名称。之后使用这把密钥连接会直接进入其所属账号。服务器不接收私钥。
 
@@ -50,25 +49,42 @@ ssh -t -p 2222 -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes chat@example.com
 
 未携带密钥时，SSH 使用零问题 `keyboard-interactive` 打开账号密码界面。程序客户端需要支持此认证方式。登录后没有输入空闲或总在线时长限制；网络失联的连接仍会回收。
 
+## GPUI 原生客户端
+
+`gpui-client` 通过同一 SSH 端口请求版本化子系统 `miochat-gui-v1`。它提供
+原生的连接、主机密钥确认、登录/注册、频道列表、消息时间线、输入、状态、
+错误和断开界面。终端 `shell` 路径保持不变，未知子系统和远程命令仍会被拒绝。
+
+客户端不保存聊天室密码。首次连接会显示 `ssh-keyscan` 获取的主机密钥指纹；
+应与服务器管理员提供的指纹核对后再确认。确认的密钥写入客户端自己的
+`known_hosts`，不会使用 `StrictHostKeyChecking=no`，也不会读取用户 SSH 配置、
+执行 `ProxyCommand`、本地命令或开启转发。
+
+原生协议使用有界的换行 JSON 帧，但只存在于加密的 SSH 子系统内。服务器端
+继续使用现有的账户验证、IP/全局登录限制、最多三会话限制、权限检查、消息
+事务、操作速率限制和会话撤销检查；它不是一个可直接访问数据库的接口。
+
 ## 服务与数据
+
+下列大写参数是占位符，不是实际运行路径；由管理员在另行授权的部署中选择。
 
 Linux 可使用 [systemd 单元](../deploy/miochat.service)，按实际路径和端口调整，并使用独立低权限账户运行。先注册聊天室账号，再在停服时授予站长权限：
 
 ```sh
-./miochat -state /var/lib/miochat -owner 用户名
+./miochat -state STATE_DIRECTORY -owner 用户名
 ```
 
 状态目录中的数据库和主机密钥应一起备份。一致性备份包含已提交的 WAL，目标目录必须不存在：
 
 ```sh
-./miochat -state /var/lib/miochat -backup /var/backups/miochat/snapshot
+./miochat -state STATE_DIRECTORY -backup NEW_SNAPSHOT_DIRECTORY
 ```
 
 检查及恢复需要停止对应实例；恢复前会另存当前状态。
 
 ```sh
-./miochat -state /var/lib/miochat -check
-./miochat -state /var/lib/miochat -restore /var/backups/miochat/snapshot
+./miochat -state STATE_DIRECTORY -check
+./miochat -state STATE_DIRECTORY -restore NEW_SNAPSHOT_DIRECTORY
 ```
 
 聊天室内的 `/backup`、`/check` 在后台执行，同一实例一次一个维护作业；`/canceljob` 可取消本连接的作业。备份会先检查空间，不会自动删除历史。恢复中断后，程序会在独占打开状态目录时完成已提交的恢复；应保留恢复标记和暂存文件。

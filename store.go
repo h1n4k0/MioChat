@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"errors"
@@ -28,6 +29,7 @@ type User struct {
 }
 type Room struct{ Name, Topic, Owner string }
 type Message struct {
+	Attachment                                      *attachmentInfo
 	ID                                              int64
 	Room, Sender, Recipient, Body, Kind             string
 	At                                              int64
@@ -35,19 +37,25 @@ type Message struct {
 	Recaller, ReactionSummary, ReplyName, ReplyBody string
 }
 type Store struct {
-	db            *appDB
-	dummySalt     []byte
-	path          string
-	ipPolicy      ipPolicyCache
-	maintenanceMu sync.Mutex
+	attachmentSweepMu sync.Mutex
+	attachmentSweepAt time.Time
+	attachmentNow     func() time.Time // nil uses the server clock; injectable in synthetic tests.
+	db                *appDB
+	dummySalt         []byte
+	path              string
+	ipPolicy          ipPolicyCache
+	maintenanceMu     sync.Mutex
 }
 type appDB struct {
 	*sql.DB
-	reader       *sql.DB
-	policyReader *sql.DB
+	reader                 *sql.DB
+	policyReader           *sql.DB
+	readPlans, policyPlans *readStatements
 }
 
 func (db *appDB) Close() error {
+	db.policyPlans.close()
+	db.readPlans.close()
 	if db.policyReader != nil {
 		_ = db.policyReader.Close()
 	}
@@ -125,9 +133,23 @@ INSERT OR IGNORE INTO rooms VALUES('lobby','欢迎来到 MioChat · 从一句你
 		policy.SetMaxIdleConns(1)
 		wrapped.policyReader = policy
 	}
+	readDB := wrapped.reader
+	if readDB == nil {
+		readDB = wrapped.DB
+	}
+	policyDB := wrapped.policyReader
+	if policyDB == nil {
+		policyDB = readDB
+	}
+	wrapped.readPlans = newReadStatements(readDB, 32)
+	wrapped.policyPlans = newReadStatements(policyDB, 8)
 	s := &Store{db: wrapped, dummySalt: make([]byte, 16), path: path}
 	if _, err = rand.Read(s.dummySalt); err != nil {
 		db.Close()
+		return nil, err
+	}
+	if _, err = s.ExpireAttachmentUploads(context.Background(), 32); err != nil {
+		wrapped.Close()
 		return nil, err
 	}
 	return s, nil

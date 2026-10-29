@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -25,6 +26,49 @@ func tokenHash(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
 }
+
+var errRegistrationPolicyUnavailable = errors.New("注册策略暂不可用，请稍后再试")
+
+// Policy absence keeps the historical open/one-per-IP compatibility defaults;
+// a SQL/scan error or malformed stored value is never a permission to register.
+// The caller owns the same writer transaction as all registration effects.
+func registrationPolicyQ(q queryer, ip string, now int64) (string, error) {
+	var mode, quota string
+	e := q.QueryRow(`SELECT value FROM config WHERE key='registration'`).Scan(&mode)
+	if errors.Is(e, sql.ErrNoRows) {
+		mode = "open"
+	} else if e != nil {
+		return "", errRegistrationPolicyUnavailable
+	}
+	switch mode {
+	case "open", "invite":
+	case "closed":
+		return "", errors.New("管理员已暂停注册")
+	default:
+		return "", errRegistrationPolicyUnavailable
+	}
+	e = q.QueryRow(`SELECT value FROM config WHERE key='registration_quota'`).Scan(&quota)
+	if errors.Is(e, sql.ErrNoRows) {
+		quota = "1"
+	} else if e != nil {
+		return "", errRegistrationPolicyUnavailable
+	}
+	limit, e := strconv.Atoi(quota)
+	if e != nil || limit < 1 || limit > 100 {
+		return "", errRegistrationPolicyUnavailable
+	}
+	if ip != "" {
+		var count int
+		if e = q.QueryRow(`SELECT count(*) FROM logins WHERE ip=? AND client='registration' AND at>?`, ip, now-3600).Scan(&count); e != nil {
+			return "", errRegistrationPolicyUnavailable
+		}
+		if count >= limit {
+			return "", errors.New("此 IP 的每小时注册配额已用完")
+		}
+	}
+	return mode, nil
+}
+
 func (s *Store) RegisterInvite(name, password, confirm, invite, ip, client string) (User, error) {
 	name = accountKey(name)
 	if !validName(name) {
@@ -46,41 +90,34 @@ func (s *Store) RegisterInvite(name, password, confirm, invite, ip, client strin
 		return User{}, e
 	}
 	defer tx.Rollback()
-	var mode, quota string
-	_ = tx.QueryRow(`SELECT value FROM config WHERE key='registration'`).Scan(&mode)
-	_ = tx.QueryRow(`SELECT value FROM config WHERE key='registration_quota'`).Scan(&quota)
-	if mode == "closed" {
-		return User{}, errors.New("管理员已暂停注册")
-	}
-	if ip != "" {
-		maxRegistrations, _ := strconv.Atoi(quota)
-		var count int
-		_ = tx.QueryRow(`SELECT count(*) FROM logins WHERE ip=? AND client='registration' AND at>?`, ip, time.Now().Unix()-3600).Scan(&count)
-		if count >= max(1, maxRegistrations) {
-			return User{}, errors.New("此 IP 的每小时注册配额已用完")
-		}
+	mode, e := registrationPolicyQ(tx, ip, time.Now().Unix())
+	if e != nil {
+		return User{}, e
 	}
 	if mode == "invite" {
 		r, e := tx.Exec(`UPDATE invites SET remaining=remaining-1 WHERE hash=? AND remaining>0 AND (expires=0 OR expires>?)`, tokenHash(strings.TrimSpace(invite)), time.Now().Unix())
 		if e != nil {
 			return User{}, e
 		}
-		n, _ := r.RowsAffected()
+		n, e := r.RowsAffected()
+		if e != nil {
+			return User{}, errors.New("邀请码验证暂不可用")
+		}
 		if n != 1 {
 			return User{}, errors.New("邀请码无效、已用完或过期")
 		}
 	}
-	if _, e = tx.Exec(`INSERT INTO users(name,hash,salt,created) VALUES(?,?,?,?)`, name, hash, salt, time.Now().Unix()); e != nil {
+	if e = changedOne(tx.Exec(`INSERT INTO users(name,hash,salt,created) VALUES(?,?,?,?)`, name, hash, salt, time.Now().Unix())); e != nil {
 		return User{}, errors.New("用户名已被注册，或注册暂不可用")
 	}
-	if _, e = tx.Exec(`INSERT INTO user_meta(name) VALUES(?)`, name); e != nil {
+	if e = changedOne(tx.Exec(`INSERT INTO user_meta(name) VALUES(?)`, name)); e != nil {
 		return User{}, e
 	}
-	if _, e = tx.Exec(`INSERT INTO badges VALUES(?,'开拓者',?)`, name, time.Now().Unix()); e != nil {
+	if e = changedOne(tx.Exec(`INSERT INTO badges VALUES(?,'开拓者',?)`, name, time.Now().Unix())); e != nil {
 		return User{}, e
 	}
 	if ip != "" {
-		if _, e = tx.Exec(`INSERT INTO logins(user,ip,client,ok,at) VALUES(?,?,'registration',1,?)`, name, ip, time.Now().Unix()); e != nil {
+		if e = changedOne(tx.Exec(`INSERT INTO logins(user,ip,client,ok,at) VALUES(?,?,'registration',1,?)`, name, ip, time.Now().Unix())); e != nil {
 			return User{}, e
 		}
 	}
@@ -89,101 +126,24 @@ func (s *Store) RegisterInvite(name, password, confirm, invite, ip, client strin
 	}
 	return s.registrationUser(name)
 }
+
+// Compatibility APIs for non-connection fixtures. Actual TUI/native routes use
+// the nonempty-session methods and perform fresh one-time result authorization.
 func (s *Store) InviteCode(actor, duration string, uses int) (string, error) {
-	if uses < 1 || uses > 100 {
-		return "", errors.New("使用次数范围 1–100")
-	}
-	seconds, e := durationSeconds(duration)
-	if e != nil {
-		return "", e
-	}
-	token, e := secretToken()
-	if e != nil {
-		return "", e
-	}
-	expires := int64(0)
-	if seconds > 0 {
-		expires = time.Now().Unix() + seconds
-	}
-	e = s.writeTransaction(func(tx *sql.Tx) error {
-		u, err := mutationActorQ(tx, actor)
-		if err != nil {
-			return err
-		}
-		if !isAdmin(u.Role) {
-			return errors.New("需要管理员权限")
-		}
-		if err = changedOne(tx.Exec(`INSERT INTO invites VALUES(?,?,?,?,?)`, tokenHash(token), u.Name, expires, uses, time.Now().Unix())); err != nil {
-			return err
-		}
-		return auditQ(tx, u.Name, "invite.create", "", "次数 "+strconv.Itoa(uses), "")
-	})
-	if e != nil {
-		return "", e
-	}
-	return token, e
+	out, err := s.inviteCodeForSession(context.Background(), actor, duration, uses, "")
+	return out.secret, err
 }
 func (s *Store) ResetPassword(actor, target string) (string, error) {
-	u, e := s.User(actor)
-	if e != nil {
-		return "", e
-	}
-	other, e := s.Resolve(target)
-	if e != nil {
-		return "", e
-	}
-	if !isAdmin(u.Role) || other.Name == actor || roleRank(other.Role) >= roleRank(u.Role) {
-		return "", errors.New("不能重置此账户的密码")
-	}
-	password, e := secretToken()
-	if e != nil {
-		return "", e
-	}
-	salt := make([]byte, 16)
-	if _, e = rand.Read(salt); e != nil {
-		return "", e
-	}
-	hash := passwordHash(password, salt)
-	tx, e := s.db.Begin()
-	if e != nil {
-		return "", e
-	}
-	defer tx.Rollback()
-	currentActor, e := currentCredentialUserQ(tx, u.Name)
-	if e != nil {
-		return "", e
-	}
-	currentTarget, e := userQ(tx, other.Name)
-	if e != nil {
-		return "", e
-	}
-	if currentActor.MustReset || !isAdmin(currentActor.Role) || currentTarget.Name == currentActor.Name || roleRank(currentTarget.Role) >= roleRank(currentActor.Role) {
-		return "", errors.New("不能重置此账户的密码")
-	}
-	if currentTarget.AuthEpoch < 0 || currentTarget.AuthEpoch == 1<<63-1 {
-		return "", errCredentialsChanged
-	}
-	if e = credentialWrite(tx.Exec(`UPDATE users SET hash=?,salt=? WHERE name=?`, hash, salt, other.Name)); e != nil {
-		return "", e
-	}
-	if e = setCredentialEpochQ(tx, other.Name, currentTarget.AuthEpoch+1); e != nil {
-		return "", e
-	}
-	if e = credentialWrite(tx.Exec(`UPDATE user_meta SET must_reset=1 WHERE name=?`, other.Name)); e != nil {
-		return "", e
-	}
-	if _, e = tx.Exec(`UPDATE ssh_keys SET revoked=1 WHERE user=? AND revoked=0`, other.Name); e != nil {
-		return "", e
-	}
-	if _, e = tx.Exec(`UPDATE sessions SET revoked=1 WHERE user=? AND closed=0`, other.Name); e != nil {
-		return "", e
-	}
-	if e = auditQ(tx, actor, "password.reset", other.Name, "临时密码需首次登录修改", ""); e != nil {
-		return "", e
-	}
-	return password, tx.Commit()
+	out, err := s.resetPasswordForSession(context.Background(), actor, target, "")
+	return out.secret, err
 }
 func (s *Store) RoomSetting(actor, room, key, value string) error {
+	return s.roomSettingForSession(actor, room, key, value, "")
+}
+func (s *Store) roomSettingForSession(actor, room, key, value, sessionID string) error {
+	return s.writeTransaction(func(tx *sql.Tx) error { return roomSettingQ(tx, actor, room, key, value, sessionID) })
+}
+func roomSettingQ(q queryer, actor, room, key, value, sessionID string) error {
 	column := ""
 	var data any
 	switch key {
@@ -210,56 +170,73 @@ func (s *Store) RoomSetting(actor, room, key, value string) error {
 	default:
 		return errors.New("频道设置：private readonly archive category rules announcement slow transfer")
 	}
-	return s.writeTransaction(func(tx *sql.Tx) error {
-		u, e := mutationActorQ(tx, actor)
+	u, e := mutationActorQ(q, actor)
+	if e != nil {
+		return e
+	}
+	if sessionID != "" {
+		if valid, err := sessionCurrentQ(q, sessionID, u.Name); err != nil || !valid {
+			return errCredentialsChanged
+		}
+		if !canReadQ(q, u.Name, room) {
+			return errors.New("room access denied")
+		}
+	}
+	r, e := roomQ(q, room)
+	if e != nil {
+		return e
+	}
+	if !canManageQ(q, u.Name, room) {
+		return errors.New("需要频道管理权限")
+	}
+	if key == "private" || key == "archive" || key == "transfer" {
+		if u.Name != r.Owner && !isAdmin(u.Role) {
+			return errors.New("此操作需要频道所有者或管理员权限")
+		}
+		if room == "lobby" {
+			return errors.New("公共大厅不能私密化、归档或转让")
+		}
+	}
+	if key == "transfer" {
+		target, e := resolveUserQ(q, value)
 		if e != nil {
 			return e
 		}
-		r, e := roomQ(tx, room)
-		if e != nil {
+		if e = changedOne(q.Exec(`UPDATE rooms SET owner=? WHERE name=?`, target.Name, room)); e != nil {
 			return e
 		}
-		if !canManageQ(tx, u.Name, room) {
-			return errors.New("需要频道管理权限")
-		}
-		if key == "private" || key == "archive" || key == "transfer" {
-			if u.Name != r.Owner && !isAdmin(u.Role) {
-				return errors.New("此操作需要频道所有者或管理员权限")
-			}
-			if room == "lobby" {
-				return errors.New("公共大厅不能私密化、归档或转让")
-			}
-		}
-		if key == "transfer" {
-			target, e := resolveUserQ(tx, value)
-			if e != nil {
-				return e
-			}
-			if e = changedOne(tx.Exec(`UPDATE rooms SET owner=? WHERE name=?`, target.Name, room)); e != nil {
-				return e
-			}
-			if _, e = tx.Exec(`UPDATE members SET role='member' WHERE room=? AND role='owner'`, room); e != nil {
-				return e
-			}
-			if e = changedOne(tx.Exec(`INSERT INTO members VALUES(?,?,'owner',?) ON CONFLICT(room,user) DO UPDATE SET role='owner'`, room, target.Name, time.Now().Unix())); e != nil {
-				return e
-			}
-			return auditQ(tx, u.Name, "room.transfer", target.Name, "", room)
-		}
-		if _, e = tx.Exec(`INSERT OR IGNORE INTO room_meta(name) VALUES(?)`, room); e != nil {
+		if _, e = q.Exec(`UPDATE members SET role='member' WHERE room=? AND role='owner'`, room); e != nil {
 			return e
 		}
-		if e = changedOne(tx.Exec(`UPDATE room_meta SET `+column+`=? WHERE name=?`, data, room)); e != nil {
+		if e = changedOne(q.Exec(`INSERT INTO members VALUES(?,?,'owner',?) ON CONFLICT(room,user) DO UPDATE SET role='owner'`, room, target.Name, time.Now().Unix())); e != nil {
 			return e
 		}
-		return auditQ(tx, u.Name, "room."+key, room, value, room)
-	})
+		return auditQ(q, u.Name, "room.transfer", target.Name, "", room)
+	}
+	if _, e = q.Exec(`INSERT OR IGNORE INTO room_meta(name) VALUES(?)`, room); e != nil {
+		return e
+	}
+	if e = changedOne(q.Exec(`UPDATE room_meta SET `+column+`=? WHERE name=?`, data, room)); e != nil {
+		return e
+	}
+	return auditQ(q, u.Name, "room."+key, room, value, room)
 }
 func (s *Store) RoomMember(actor, room, target, action string) error {
+	return s.roomMemberForSession(actor, room, target, action, "")
+}
+func (s *Store) roomMemberForSession(actor, room, target, action, sessionID string) error {
 	return s.writeTransaction(func(tx *sql.Tx) error {
 		u, e := mutationActorQ(tx, actor)
 		if e != nil {
 			return e
+		}
+		if sessionID != "" {
+			if valid, err := sessionCurrentQ(tx, sessionID, u.Name); err != nil || !valid {
+				return errCredentialsChanged
+			}
+			if !canReadQ(tx, u.Name, room) {
+				return errors.New("room access denied")
+			}
 		}
 		if !canManageQ(tx, u.Name, room) {
 			return errors.New("需要频道管理权限")
@@ -321,30 +298,38 @@ func (s *Store) RoomMembers(actor, room string) ([]string, error) {
 	return names, rows.Err()
 }
 func (s *Store) LeaveRoom(user, room string) error {
-	r, e := s.RoomInfo(room)
-	if e != nil {
-		return e
-	}
-	if r.Owner == user {
-		return errors.New("请先转让频道所有权")
-	}
-	_, e = s.db.Exec(`DELETE FROM members WHERE room=? AND user=?`, room, user)
-	return e
+	return s.leaveRoomForSession(user, room, "")
+}
+func (s *Store) leaveRoomForSession(user, room, sessionID string) error {
+	return s.writeTransaction(func(tx *sql.Tx) error {
+		u, err := mutationActorQ(tx, user)
+		if err != nil {
+			return err
+		}
+		if sessionID != "" {
+			if valid, err := sessionCurrentQ(tx, sessionID, u.Name); err != nil || !valid {
+				return errCredentialsChanged
+			}
+			if !canReadQ(tx, u.Name, room) {
+				return errors.New("room access denied")
+			}
+		}
+		r, err := roomQ(tx, room)
+		if err != nil {
+			return err
+		}
+		if r.Owner == u.Name {
+			return errors.New("请先转让频道所有权")
+		}
+		if !canReadQ(tx, u.Name, room) {
+			return errors.New("room access denied")
+		}
+		_, err = tx.Exec(`DELETE FROM members WHERE room=? AND user=?`, room, u.Name)
+		return err
+	})
 }
 func (s *Store) Report(user string, id int64, reason string) error {
-	if _, e := s.Message(user, id); e != nil {
-		return e
-	}
-	if cleanText(reason, 240) == "" {
-		return errors.New("请填写举报原因")
-	}
-	var count int
-	_ = s.db.QueryRow(`SELECT count(*) FROM reports WHERE user=? AND at>?`, user, time.Now().Unix()-3600).Scan(&count)
-	if count >= 10 {
-		return errors.New("每小时最多提交 10 次举报")
-	}
-	_, e := s.db.Exec(`INSERT INTO reports(user,message_id,reason,at) VALUES(?,?,?,?)`, user, id, cleanText(reason, 240), time.Now().Unix())
-	return e
+	return s.writeTransaction(func(tx *sql.Tx) error { _, _, err := reportQ(tx, user, id, reason); return err })
 }
 func (s *Store) AdminList(actor, kind string) ([]string, error) {
 	u, e := s.User(actor)
@@ -384,22 +369,7 @@ func (s *Store) AdminList(actor, kind string) ([]string, error) {
 	return lines, rows.Err()
 }
 func (s *Store) ResolveReport(actor string, id int64, status string) error {
-	if status != "resolved" && status != "rejected" {
-		return errors.New("状态为 resolved 或 rejected")
-	}
-	return s.writeTransaction(func(tx *sql.Tx) error {
-		u, e := mutationActorQ(tx, actor)
-		if e != nil {
-			return e
-		}
-		if !isAdmin(u.Role) {
-			return errors.New("需要管理员权限")
-		}
-		if e = changedOne(tx.Exec(`UPDATE reports SET status=?,resolver=? WHERE id=?`, status, u.Name, id)); e != nil {
-			return e
-		}
-		return auditQ(tx, u.Name, "report."+status, strconv.FormatInt(id, 10), "", "")
-	})
+	return s.writeTransaction(func(tx *sql.Tx) error { return resolveReportQ(tx, actor, id, status) })
 }
 func (s *Store) ReportMessage(actor string, id int64) (Message, error) {
 	u, e := s.User(actor)

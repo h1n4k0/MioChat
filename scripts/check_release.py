@@ -6,7 +6,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 ROOT_FILES = {"go.mod", "go.sum", ".gitignore", ".gitattributes", "README.md", "LICENSE", "SECURITY.md", "THIRD_PARTY_NOTICES"}
-DIRECTORIES = {".github", "deploy", "docs", "internal", "scripts", "signing", "testdata"}
+DIRECTORIES = {".github", "cmd", "deploy", "docs", "gpui-client", "integrations", "internal", "scripts", "signing", "testdata"}
 GENERATED = {".git", ".build", "dist", ".venv", "__pycache__"}
 PRIVATE_HEADER = re.compile(rb"(?m)^-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----\r?$")
 

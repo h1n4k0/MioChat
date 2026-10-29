@@ -1,0 +1,9 @@
+[project]
+name = "miochat-dot-adapter"
+version = "0.1.0"
+description = "Fail-closed MCP Events adapter; live product wiring is not configured"
+requires-python = ">=3.12"
+dependencies = ["PyJWT[crypto]==2.13.0", "cryptography==50.0.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

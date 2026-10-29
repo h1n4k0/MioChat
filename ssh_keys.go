@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -176,6 +177,17 @@ func (s *Store) BindSSHKeyForSession(sessionID, user, label, raw string) (SSHKey
 }
 
 func (s *Store) bindSSHKey(sessionID, user, label, raw string) (SSHKey, error) {
+	return s.bindSSHKeyContext(context.Background(), sessionID, user, label, raw)
+}
+
+func (s *Store) BindSSHKeyForSessionContext(ctx context.Context, sessionID, user, label, raw string) (SSHKey, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return SSHKey{}, errors.New("当前会话不可用，请重新登录")
+	}
+	return s.bindSSHKeyContext(ctx, sessionID, user, label, raw)
+}
+
+func (s *Store) bindSSHKeyContext(ctx context.Context, sessionID, user, label, raw string) (SSHKey, error) {
 	public, normalized, err := ParseSSHKey(raw)
 	if err != nil {
 		return SSHKey{}, err
@@ -186,7 +198,7 @@ func (s *Store) bindSSHKey(sessionID, user, label, raw string) (SSHKey, error) {
 		label = "我的 " + sshKeyAlgorithm(public) + " 密钥"
 	}
 	fingerprint := gossh.FingerprintSHA256(public)
-	tx, err := s.db.Begin()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return SSHKey{}, err
 	}
@@ -246,6 +258,9 @@ func (s *Store) bindSSHKey(sessionID, user, label, raw string) (SSHKey, error) {
 	}
 	key, err = scanSSHKey(tx.QueryRow(`SELECT `+sshKeyProjection+` FROM ssh_keys WHERE id=? AND user=?`, key.ID, user))
 	if err != nil {
+		return SSHKey{}, err
+	}
+	if err = ctx.Err(); err != nil {
 		return SSHKey{}, err
 	}
 	if err = tx.Commit(); err != nil {

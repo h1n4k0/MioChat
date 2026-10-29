@@ -107,44 +107,110 @@ func snapshotCapacity(source, destination string, freeSpace func(string) (uint64
 	return nil
 }
 
-// RunMaintenance admits one maintenance operation per running store. The caller
-// supplies its session context, so disconnecting or cancelling stops SQL and IO.
-func (s *Store) RunMaintenance(ctx context.Context, actor, kind string) ([]string, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
+// maintenanceOutcome distinguishes durable backup creation from a later audit
+// warning. No caller may treat the latter as permission to retry the snapshot.
+type maintenanceOutcome struct {
+	Kind      string
+	Lines     []string
+	Committed bool
+	Warning   string
+	Epoch     int64
+}
+
+// Admission and delivery use the same short, failclosed authorization snapshot.
+// This is only the DB authorization budget, not a timeout for filesystem IO.
+func (s *Store) maintenanceActor(ctx context.Context, actor, sessionID string) (User, error) {
+	if ctx == nil {
+		return User{}, errCredentialsChanged
 	}
-	if kind != "backup" && kind != "check" {
-		return nil, errors.New("维护作业类型无效")
-	}
-	if !s.maintenanceMu.TryLock() {
-		return nil, errors.New("已有维护作业正在运行，请稍后再试")
-	}
-	defer s.maintenanceMu.Unlock()
-	u, err := currentCredentialUserQ(maintenanceQueryer{ctx: ctx, db: s.readDB()}, actor)
+	ctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	tx, err := s.readDB().BeginTx(ctx, nil)
 	if err != nil {
-		return nil, maintenanceError(ctx, err)
+		return User{}, err
+	}
+	defer tx.Rollback()
+	q := scopedQuery{ctx: ctx, db: tx}
+	if sessionID != "" {
+		valid, e := sessionCurrentQ(q, sessionID, actor)
+		if e != nil {
+			return User{}, maintenanceError(ctx, e)
+		}
+		if !valid {
+			return User{}, errCredentialsChanged
+		}
+	}
+	u, err := currentCredentialUserQ(q, actor)
+	if err != nil {
+		return User{}, maintenanceError(ctx, err)
 	}
 	if !isAdmin(u.Role) || u.MustReset {
-		return nil, errors.New("需要已完成密码设置的管理员权限")
+		return User{}, errors.New("需要已完成密码设置的管理员权限")
 	}
+	if err = tx.Commit(); err != nil {
+		return User{}, err
+	}
+	return u, nil
+}
+
+// Compatibility Store API is retained for non-connection fixtures. Both actual
+// TUI and GUI entry points must use the nonempty-session method below.
+func (s *Store) RunMaintenance(ctx context.Context, actor, kind string) ([]string, error) {
+	out, err := s.runMaintenance(ctx, actor, "", kind)
+	if err == nil && out.Warning != "" {
+		err = errors.New(out.Warning)
+	}
+	return out.Lines, err
+}
+func (s *Store) RunMaintenanceForSession(ctx context.Context, actor, sessionID, kind string) (maintenanceOutcome, error) {
+	if sessionID == "" {
+		return maintenanceOutcome{}, errCredentialsChanged
+	}
+	return s.runMaintenance(ctx, actor, sessionID, kind)
+}
+
+// One admitted maintenance operation per store. Context cancellation covers
+// queued DB access and snapshot SQL/copy/hash; committed snapshots are not undone.
+func (s *Store) runMaintenance(ctx context.Context, actor, sessionID, kind string) (maintenanceOutcome, error) {
+	out := maintenanceOutcome{Kind: kind}
+	if ctx == nil {
+		return out, errCredentialsChanged
+	}
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
+	if kind != "backup" && kind != "check" {
+		return out, errors.New("维护作业类型无效")
+	}
+	if !s.maintenanceMu.TryLock() {
+		return out, errors.New("已有维护作业正在运行，请稍后再试")
+	}
+	defer s.maintenanceMu.Unlock()
+	u, err := s.maintenanceActor(ctx, actor, sessionID)
+	if err != nil {
+		return out, err
+	}
+	out.Epoch = u.AuthEpoch
 	if kind == "check" {
-		return s.ChecksContext(ctx)
+		out.Lines, err = s.ChecksContext(ctx)
+		return out, err
 	}
 	if s.path == ":memory:" {
-		return nil, errors.New("内存数据库不执行磁盘备份")
+		return out, errors.New("内存数据库不执行磁盘备份")
 	}
 	state := filepath.Dir(s.path)
 	destination := filepath.Join(state, "backups", "backup-"+time.Now().UTC().Format("20060102T150405.000000000"))
 	if _, err = makeSnapshotFileContext(ctx, s.path, state, destination); err != nil {
-		return nil, err
+		return out, err
 	}
-	lines := []string{destination, "包括数据库、主机密钥与摘要清单。"}
-	// The snapshot is already committed. Record its outcome with a bounded
-	// context even if the client disconnected immediately after completion.
+	out.Committed = true
+	out.Lines = []string{destination, "包括数据库、主机密钥与摘要清单；保存在服务器端，不会下载到本设备。"}
+	// Only this bounded audit is detached from a now-cancelled session after the
+	// snapshot has already committed. It does not initiate another snapshot.
 	auditContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 	defer cancel()
-	if err = auditQ(maintenanceQueryer{ctx: auditContext, db: s.db.DB}, actor, "backup.create", filepath.Base(destination), "", ""); err != nil {
-		return lines, fmt.Errorf("备份已保存，但审计写入失败：%w", err)
+	if err = auditQ(maintenanceQueryer{ctx: auditContext, db: s.db.DB}, u.Name, "backup.create", filepath.Base(destination), "", ""); err != nil {
+		out.Warning = fmt.Sprintf("备份已保存，但审计写入失败：%v", err)
 	}
-	return lines, nil
+	return out, nil
 }

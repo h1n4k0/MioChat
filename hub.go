@@ -11,13 +11,14 @@ import (
 )
 
 type Event struct {
-	Message    *Message
-	Presence   bool
-	Refresh    bool
-	Notice     string
-	NoticeKind string
-	MoveRoom   string
-	ChangedID  int64
+	Preferences bool
+	Message     *Message
+	Presence    bool
+	Refresh     bool
+	Notice      string
+	NoticeKind  string
+	MoveRoom    string
+	ChangedID   int64
 }
 type Client struct {
 	Name, Room, Peer string
@@ -160,6 +161,15 @@ func (h *Hub) Refresh() {
 		h.emitLocked(c, Event{Refresh: true})
 	}
 }
+func (h *Hub) PreferencesChanged(user string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c := range h.clients {
+		if c.Name == user {
+			h.emitLocked(c, Event{Preferences: true})
+		}
+	}
+}
 func (h *Hub) RemoveRoomUser(name, room string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -295,7 +305,7 @@ func (h *Hub) Kick(name string) {
 	defer h.mu.Unlock()
 	for c := range h.clients {
 		if c.Name == name {
-			go c.Close()
+			c.closeOnce.Do(func() { go c.Close() })
 		}
 	}
 }

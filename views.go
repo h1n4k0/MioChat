@@ -140,6 +140,9 @@ func (m *model) forceMove(room string) error {
 }
 
 func (m *model) moveContext(room, peer string, forced bool) error {
+	if (room != m.room || peer != m.peer) && m.secretPanel != nil {
+		m.closePanel()
+	}
 	if peer != "" {
 		u, e := m.store.Resolve(peer)
 		if e != nil {
@@ -256,6 +259,7 @@ func (m *model) flushRates() {
 	}
 }
 func (m *model) reloadVisible() {
+	m.revalidateSecretPanel(time.Now(), true)
 	if !m.logged {
 		return
 	}
@@ -265,7 +269,7 @@ func (m *model) reloadVisible() {
 	if m.peer == "" && !m.store.CanRead(m.user.Name, m.room) {
 		m.feed = nil
 		m.replyID = 0
-		m.panelTitle = ""
+		m.closePanel()
 		_ = m.forceMove("lobby")
 		m.note("频道访问权限已更新，你已返回大厅")
 		return
@@ -400,6 +404,13 @@ func (m *model) poke(name string) {
 }
 
 func (m *model) closePanel() {
+	if m.secretPanel != nil {
+		m.secretPanel.active = false
+		for i := range m.panelLines {
+			m.panelLines[i] = ""
+		}
+		m.secretPanel = nil
+	}
 	m.panelMessageID = 0
 	m.panelTitle = ""
 	m.panelKind = ""
@@ -412,6 +423,7 @@ func (m *model) closePanel() {
 	m.panelSelected = 0
 }
 func (m *model) openPanel(title, kind string, lines []string, actions []panelAction) {
+	m.closePanel()
 	m.help = false
 	m.panelTitle = title
 	m.panelKind = kind
@@ -616,6 +628,9 @@ func (m model) hits() []hit {
 	return hits
 }
 func (m model) View() string {
+	if m.panelKind == "secret" && !m.secretPanelLocallyAllowed(time.Now()) {
+		m.closePanel()
+	}
 	if m.awaitingTerminalSize {
 		return ""
 	}

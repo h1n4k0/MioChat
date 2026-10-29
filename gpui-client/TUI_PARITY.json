@@ -1,0 +1,1198 @@
+{
+  "format": "public-command-reference",
+  "catalog_count": 139,
+  "supplementary_count": 9,
+  "rows": [
+    {
+      "command": "/canceljob",
+      "args": "",
+      "description": "取消当前连接的后台维护作业",
+      "group": "OPERATIONS",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/draft-conflicts",
+      "args": "",
+      "description": "找回本人的冲突草稿",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/keys",
+      "args": "",
+      "description": "我的设备密钥",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/key-add",
+      "args": "",
+      "description": "确认绑定当前连接的公钥",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/key-guide",
+      "args": "",
+      "description": "为其它设备添加密钥、选择算法",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/key-remove",
+      "args": "密钥编号",
+      "description": "确认撤销自己的设备密钥",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/key-rename",
+      "args": "密钥编号 新名称",
+      "description": "重命名自己的设备密钥",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/ipusers",
+      "args": "IP",
+      "description": "同IP成功登录账户（仅线索）",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/rooms",
+      "args": "",
+      "description": "频道列表",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/join",
+      "args": "频道",
+      "description": "切换频道",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/create",
+      "args": "频道 [private]",
+      "description": "创建公开/私密频道",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/roominfo",
+      "args": "",
+      "description": "频道介绍、规则与公告",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/roomset",
+      "args": "设置 值",
+      "description": "设置 private/readonly/category/rules/announcement/slow/transfer",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/topic",
+      "args": "话题",
+      "description": "设置频道话题",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/members",
+      "args": "",
+      "description": "频道成员与版主",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/invite",
+      "args": "用户",
+      "description": "邀请加入当前频道",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/remove",
+      "args": "用户",
+      "description": "移除频道成员",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/roommod",
+      "args": "用户",
+      "description": "设置频道版主",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/unmod",
+      "args": "用户",
+      "description": "取消频道版主",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/leave",
+      "args": "",
+      "description": "离开频道",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/archive",
+      "args": "",
+      "description": "归档当前频道",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/unarchive",
+      "args": "",
+      "description": "恢复归档频道",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/archives",
+      "args": "",
+      "description": "包含归档的频道列表",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/roompin",
+      "args": "on/off",
+      "description": "个人频道置顶",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/subscribe",
+      "args": "on/off",
+      "description": "订阅频道未读",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/roommute",
+      "args": "on/off",
+      "description": "频道通知静音",
+      "group": "CHANNELS",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/dm",
+      "args": "用户",
+      "description": "打开私聊，支持离线消息",
+      "group": "MESSAGES",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/msg",
+      "args": "用户 内容",
+      "description": "发送私信",
+      "group": "MESSAGES",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/back",
+      "args": "",
+      "description": "返回大厅并清除离开状态",
+      "group": "MESSAGES",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/reply",
+      "args": "编号 [内容]",
+      "description": "选中或发送指定回复",
+      "group": "MESSAGES",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/cancelreply",
+      "args": "",
+      "description": "取消当前回复",
+      "group": "MESSAGES",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/mention",
+      "args": "用户",
+      "description": "把 @用户 插入输入框",
+      "group": "MESSAGES",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/recall",
+      "args": "编号",
+      "description": "撤回自己的消息（5分钟）",
+      "group": "MESSAGES",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/edit",
+      "args": "编号 内容",
+      "description": "编辑自己的消息（5分钟）",
+      "group": "MESSAGES",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/react",
+      "args": "编号 like/laugh/question/heart/wow/sad",
+      "description": "切换消息反应",
+      "group": "MESSAGES",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/history",
+      "args": "[数量]",
+      "description": "最近记录（最大200）",
+      "group": "HISTORY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/older",
+      "args": "",
+      "description": "加载更早记录",
+      "group": "HISTORY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/search",
+      "args": "关键词 [from:用户] [after:日期] [before:日期]",
+      "description": "全文筛选当前会话",
+      "group": "HISTORY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/jump",
+      "args": "编号",
+      "description": "跳转消息所在会话",
+      "group": "HISTORY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/read",
+      "args": "编号",
+      "description": "展开阅读消息",
+      "group": "HISTORY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/bookmark",
+      "args": "编号",
+      "description": "收藏消息",
+      "group": "HISTORY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/unbookmark",
+      "args": "编号",
+      "description": "取消收藏",
+      "group": "HISTORY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/bookmarks",
+      "args": "",
+      "description": "查看收藏",
+      "group": "HISTORY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/pin",
+      "args": "编号",
+      "description": "频道置顶（管理者）",
+      "group": "HISTORY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/unpin",
+      "args": "编号",
+      "description": "取消置顶",
+      "group": "HISTORY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/pins",
+      "args": "",
+      "description": "频道置顶列表",
+      "group": "HISTORY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/clear",
+      "args": "",
+      "description": "仅清理自己的屏幕",
+      "group": "HISTORY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/notifications",
+      "args": "",
+      "description": "提及、回复、私信、戳与好友通知",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/notifyclear",
+      "args": "",
+      "description": "全部通知标为已读（不删除）",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/poke",
+      "args": "用户",
+      "description": "戳一戳，30秒冷却",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/profile",
+      "args": "[用户]",
+      "description": "用户卡片",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/who",
+      "args": "",
+      "description": "在线用户卡片列表",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/contacts",
+      "args": "",
+      "description": "好友、关注、申请与最近会话",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/recent",
+      "args": "",
+      "description": "最近私聊",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/follow",
+      "args": "用户",
+      "description": "关注",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/unfollow",
+      "args": "用户",
+      "description": "取消关注",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/following",
+      "args": "",
+      "description": "关注列表",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/friend",
+      "args": "用户",
+      "description": "申请好友",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/accept",
+      "args": "用户",
+      "description": "接受好友申请",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/decline",
+      "args": "用户",
+      "description": "拒绝好友申请",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/unfriend",
+      "args": "用户",
+      "description": "解除双向好友关系",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/friends",
+      "args": "",
+      "description": "好友列表",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/note",
+      "args": "用户 备注",
+      "description": "设置只对自己可见的备注",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/unnote",
+      "args": "用户",
+      "description": "删除私有备注",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/ignore",
+      "args": "用户",
+      "description": "持久屏蔽",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/unignore",
+      "args": "用户",
+      "description": "取消屏蔽",
+      "group": "SOCIAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/bio",
+      "args": "简介",
+      "description": "修改简介",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/status",
+      "args": "状态",
+      "description": "修改状态文字",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/afk",
+      "args": "[原因]",
+      "description": "暂时离开",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/theme",
+      "args": "aurora/sakura/amber/mono/light/contrast",
+      "description": "配色主题",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/pref",
+      "args": "设置 on/off",
+      "description": "poke/motion/bell/dnd/compact/ascii/welcome/contrast",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/dnd",
+      "args": "on/off",
+      "description": "勿扰模式",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/avatar",
+      "args": "camp/cat/robot/planet/flower/ident",
+      "description": "ASCII头像",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/badges",
+      "args": "[用户]",
+      "description": "活动成就",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/passwd",
+      "args": "",
+      "description": "隐藏输入的改密表单",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/logins",
+      "args": "[用户]",
+      "description": "自己的登录历史；管理员可查他人",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/sessions",
+      "args": "[用户]",
+      "description": "会话管理",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/disconnect",
+      "args": "会话ID",
+      "description": "断开有权管理的一个会话",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/logoutothers",
+      "args": "",
+      "description": "退出自己的其他设备",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/logout",
+      "args": "",
+      "description": "退出当前连接",
+      "group": "ACCOUNT",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/poll",
+      "args": "问题|选项1|选项2",
+      "description": "创建频道投票",
+      "group": "COMMUNITY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/vote",
+      "args": "编号 选项",
+      "description": "投票或修改选择",
+      "group": "COMMUNITY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/results",
+      "args": "编号",
+      "description": "投票结果",
+      "group": "COMMUNITY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/board",
+      "args": "",
+      "description": "长帖留言板",
+      "group": "COMMUNITY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/post",
+      "args": "标题 或 编号",
+      "description": "编写长帖或阅读旧帖",
+      "group": "COMMUNITY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/comment",
+      "args": "编号 内容",
+      "description": "评论社区条目",
+      "group": "COMMUNITY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/draw",
+      "args": "标题",
+      "description": "ASCII画板（F2预览/F4发布）",
+      "group": "COMMUNITY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/gallery",
+      "args": "",
+      "description": "ASCII作品展示",
+      "group": "COMMUNITY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/event",
+      "args": "标题|YYYY-MM-DD HH:MM|介绍",
+      "description": "创建活动（北京时间）",
+      "group": "COMMUNITY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/events",
+      "args": "",
+      "description": "频道活动",
+      "group": "COMMUNITY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/rsvp",
+      "args": "编号",
+      "description": "报名活动",
+      "group": "COMMUNITY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/unrsvp",
+      "args": "编号",
+      "description": "取消报名",
+      "group": "COMMUNITY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/participants",
+      "args": "编号",
+      "description": "参与名单",
+      "group": "COMMUNITY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/close",
+      "args": "编号",
+      "description": "结束自己的投票/活动/对局",
+      "group": "COMMUNITY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/daily",
+      "args": "",
+      "description": "每日讨论话题",
+      "group": "COMMUNITY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/ttt",
+      "args": "用户 或 accept 编号 或 编号 格子",
+      "description": "邀请/接受/进行井字棋",
+      "group": "PLAY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/guess",
+      "args": "start [上限] 或 数字",
+      "description": "猜数字",
+      "group": "PLAY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/word",
+      "args": "start 答案 或 猜测",
+      "description": "猜词",
+      "group": "PLAY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/me",
+      "args": "动作",
+      "description": "动作消息",
+      "group": "PLAY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/roll",
+      "args": "[面数]",
+      "description": "掷骰子",
+      "group": "PLAY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/coin",
+      "args": "",
+      "description": "抛硬币",
+      "group": "PLAY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/8ball",
+      "args": "问题",
+      "description": "神奇八号球",
+      "group": "PLAY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/shrug",
+      "args": "",
+      "description": "耸肩",
+      "group": "PLAY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/art",
+      "args": "",
+      "description": "ASCII营地",
+      "group": "PLAY",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/report",
+      "args": "消息编号 原因",
+      "description": "向管理员举报该条内容",
+      "group": "MODERATION",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/mute",
+      "args": "用户 期限 [原因]",
+      "description": "当前频道禁言",
+      "group": "MODERATION",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/unmute",
+      "args": "用户",
+      "description": "解除频道禁言",
+      "group": "MODERATION",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/slowmode",
+      "args": "秒数",
+      "description": "频道慢速，0关闭",
+      "group": "MODERATION",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/admin",
+      "args": "",
+      "description": "管理控制台",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/whois",
+      "args": "用户/UID",
+      "description": "账户详情",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/ip",
+      "args": "用户",
+      "description": "近期登录IP",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/kick",
+      "args": "用户",
+      "description": "断开账户连接",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/ban",
+      "args": "用户 [期限] [原因]",
+      "description": "封号，默认永久",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/unban",
+      "args": "用户",
+      "description": "解封账户",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/banip",
+      "args": "IP/CIDR 期限 [原因]",
+      "description": "仅聊天室封IP",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/unbanip",
+      "args": "IP/CIDR",
+      "description": "解封IP",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/bans",
+      "args": "",
+      "description": "封禁与禁言列表",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/gmute",
+      "args": "用户 期限 [原因]",
+      "description": "全站禁言",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/ungmute",
+      "args": "用户",
+      "description": "解除全站禁言",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/audit",
+      "args": "",
+      "description": "管理员操作日志",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/recalls",
+      "args": "",
+      "description": "公开频道撤回目录",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/revisions",
+      "args": "消息编号",
+      "description": "授权查看修订/撤回原文",
+      "group": "MODERATION",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/reports",
+      "args": "",
+      "description": "举报队列",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/reportview",
+      "args": "举报编号",
+      "description": "查看主动举报的一条消息",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/resolve",
+      "args": "举报编号 resolved/rejected",
+      "description": "处理举报",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/role",
+      "args": "用户 admin/moderator/member",
+      "description": "站长分配角色",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/resetpass",
+      "args": "用户",
+      "description": "临时密码重置并强制改密",
+      "group": "MODERATION",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/config",
+      "args": "设置 值",
+      "description": "注册/配额/维护/永久保留配置",
+      "group": "OPERATIONS",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/invitecode",
+      "args": "[期限] [次数]",
+      "description": "生成注册邀请码",
+      "group": "OPERATIONS",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/maintenance",
+      "args": "on/off [公告]",
+      "description": "维护模式",
+      "group": "OPERATIONS",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/backup",
+      "args": "",
+      "description": "创建一致性备份",
+      "group": "OPERATIONS",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/check",
+      "args": "",
+      "description": "数据库与配置校验",
+      "group": "OPERATIONS",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/errors",
+      "args": "",
+      "description": "异常与限流记录",
+      "group": "OPERATIONS",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/health",
+      "args": "",
+      "description": "运行资源看板",
+      "group": "OPERATIONS",
+      "admin": true,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/stats",
+      "args": "",
+      "description": "公开运行统计",
+      "group": "INFO",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/time",
+      "args": "",
+      "description": "北京时间",
+      "group": "INFO",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/help",
+      "args": "",
+      "description": "可搜索、可点击的命令指南",
+      "group": "INFO",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/menu",
+      "args": "",
+      "description": "功能菜单",
+      "group": "INFO",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/quit",
+      "args": "",
+      "description": "退出聊天室",
+      "group": "INFO",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/exit",
+      "args": "见上游源码",
+      "description": "未列入 commandCatalog 的别名/交互子命令",
+      "group": "ADDITIONAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/draft-retry",
+      "args": "见上游源码",
+      "description": "未列入 commandCatalog 的别名/交互子命令",
+      "group": "ADDITIONAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/draft-keep",
+      "args": "见上游源码",
+      "description": "未列入 commandCatalog 的别名/交互子命令",
+      "group": "ADDITIONAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/draft-reload",
+      "args": "见上游源码",
+      "description": "未列入 commandCatalog 的别名/交互子命令",
+      "group": "ADDITIONAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/draft-restore",
+      "args": "见上游源码",
+      "description": "未列入 commandCatalog 的别名/交互子命令",
+      "group": "ADDITIONAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/key-bind",
+      "args": "见上游源码",
+      "description": "未列入 commandCatalog 的别名/交互子命令",
+      "group": "ADDITIONAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/key-remove-confirm",
+      "args": "见上游源码",
+      "description": "未列入 commandCatalog 的别名/交互子命令",
+      "group": "ADDITIONAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/commands",
+      "args": "",
+      "description": "原TUI菜单别名",
+      "group": "ADDITIONAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    },
+    {
+      "command": "/object",
+      "args": "编号",
+      "description": "原TUI社区详情子入口",
+      "group": "ADDITIONAL",
+      "admin": false,
+      "status": "实现候选；整体验证尚未通过"
+    }
+  ],
+  "compatibility": "Native GUI commands require the paired miochat-gui-v1 server; ordinary SSH+PTY remains available.",
+  "validation": "Recovery backup only. Current regression failures remain unresolved; command coverage is not feature or platform acceptance. See ../docs/VALIDATION_STATUS.md.",
+  "coverage_summary": {
+    "catalog_candidates": 139,
+    "additional_command_candidates": 9,
+    "full_tui_parity": false
+  }
+}

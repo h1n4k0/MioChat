@@ -65,11 +65,17 @@ func canReadQ(q queryer, user, room string) bool {
 	if e != nil {
 		return false
 	}
+	return canReadRoomQ(q, user, r)
+}
+
+// Reuse only a room just read in this operation; never retain authorization
+// across requests/transactions. Private membership is still queried freshly.
+func canReadRoomQ(q queryer, user string, r RoomInfo) bool {
 	if !r.Private || r.Owner == user {
 		return true
 	}
 	var n int
-	_ = q.QueryRow(`SELECT count(*) FROM members WHERE room=? AND user=?`, room, user).Scan(&n)
+	_ = q.QueryRow(`SELECT count(*) FROM members WHERE room=? AND user=?`, r.Name, user).Scan(&n)
 	return n > 0
 }
 func canManageQ(q queryer, user, room string) bool {
@@ -94,7 +100,10 @@ func canManageQ(q queryer, user, room string) bool {
 func (s *Store) CanRead(user, room string) bool         { return canReadQ(s.db, user, room) }
 func (s *Store) RoomInfo(name string) (RoomInfo, error) { return roomQ(s.readDB(), name) }
 func (s *Store) VisibleRooms(user string, archived bool) ([]Room, error) {
-	rows, e := s.db.Query(`SELECT r.name,r.topic,r.owner FROM rooms r LEFT JOIN room_meta x ON x.name=r.name LEFT JOIN preferences p ON p.user=? AND p.scope='room:'||r.name WHERE (COALESCE(x.private,0)=0 OR r.owner=? OR EXISTS(SELECT 1 FROM members m WHERE m.room=r.name AND m.user=?)) AND (? OR COALESCE(x.archived,0)=0) ORDER BY COALESCE(p.pinned,0) DESC,CASE r.name WHEN 'lobby' THEN 0 WHEN 'dev' THEN 1 WHEN 'random' THEN 2 WHEN 'arcade' THEN 3 ELSE 4 END,COALESCE(x.category,''),r.name`, user, user, user, archived)
+	return visibleRoomsQ(s.db, user, archived)
+}
+func visibleRoomsQ(q queryer, user string, archived bool) ([]Room, error) {
+	rows, e := q.Query(`SELECT r.name,r.topic,r.owner FROM rooms r LEFT JOIN room_meta x ON x.name=r.name LEFT JOIN preferences p ON p.user=? AND p.scope='room:'||r.name WHERE (COALESCE(x.private,0)=0 OR r.owner=? OR EXISTS(SELECT 1 FROM members m WHERE m.room=r.name AND m.user=?)) AND (? OR COALESCE(x.archived,0)=0) ORDER BY COALESCE(p.pinned,0) DESC,CASE r.name WHEN 'lobby' THEN 0 WHEN 'dev' THEN 1 WHEN 'random' THEN 2 WHEN 'arcade' THEN 3 ELSE 4 END,COALESCE(x.category,''),r.name`, user, user, user, archived)
 	if e != nil {
 		return nil, e
 	}
@@ -111,13 +120,25 @@ func (s *Store) VisibleRooms(user string, archived bool) ([]Room, error) {
 }
 func (s *Store) Settings(user string) map[string]string {
 	u, e := s.User(user)
+	if e != nil {
+		return settingsForUser(User{})
+	}
+	return settingsForUser(u)
+}
+func settingsForUser(u User) map[string]string {
 	values := map[string]string{"poke": "on", "motion": "on", "bell": "off", "dnd": "off", "compact": "off", "ascii": "off", "welcome": "on", "contrast": "off", "key_reminder": "on"}
-	if e == nil {
-		_ = json.Unmarshal([]byte(u.Settings), &values)
+	var saved map[string]string
+	if json.Unmarshal([]byte(u.Settings), &saved) == nil {
+		for key, value := range saved {
+			values[key] = value
+		}
 	}
 	return values
 }
 func (s *Store) Setting(user, key, value string) error {
+	return s.settingForSession(user, key, value, "")
+}
+func (s *Store) settingForSession(user, key, value, sessionID string) error {
 	switch key {
 	case "poke", "motion", "bell", "dnd", "compact", "ascii", "welcome", "contrast", "key_reminder":
 	default:
@@ -126,7 +147,18 @@ func (s *Store) Setting(user, key, value string) error {
 	if value != "on" && value != "off" {
 		return errors.New("值为 on 或 off")
 	}
-	return changedOne(s.db.Exec(`UPDATE user_meta SET settings=json_set(CASE WHEN json_valid(settings) AND json_type(settings)='object' THEN settings ELSE '{}' END,?,?) WHERE name=?`, "$."+key, value, accountKey(user)))
+	return s.writeTransaction(func(tx *sql.Tx) error {
+		u, err := mutationActorQ(tx, user)
+		if err != nil {
+			return err
+		}
+		if sessionID != "" {
+			if valid, err := sessionCurrentQ(tx, sessionID, u.Name); err != nil || !valid {
+				return errCredentialsChanged
+			}
+		}
+		return changedOne(tx.Exec(`UPDATE user_meta SET settings=json_set(CASE WHEN json_valid(settings) AND json_type(settings)='object' THEN settings ELSE '{}' END,?,?) WHERE name=?`, "$."+key, value, u.Name))
+	})
 }
 func (s *Store) Relation(owner, target, kind, value string, remove bool) error {
 	u, e := s.Resolve(target)
@@ -159,9 +191,7 @@ func (s *Store) Relation(owner, target, kind, value string, remove bool) error {
 	return e
 }
 func (s *Store) Blocked(owner, target string) bool {
-	var n int
-	_ = s.db.QueryRow(`SELECT count(*) FROM relations WHERE owner=? AND target=? AND kind='block'`, owner, target).Scan(&n)
-	return n > 0
+	return blockedQ(s.db, owner, target)
 }
 func (s *Store) Relations(user, kind string) map[string]string {
 	result := map[string]string{}
@@ -379,42 +409,20 @@ func (s *Store) Config(key string) string {
 	return value
 }
 func (s *Store) SetConfig(actor, key, value string) error {
-	switch key {
-	case "registration":
-		if value != "open" && value != "closed" && value != "invite" {
-			return errors.New("registration: open / closed / invite")
-		}
-	case "registration_quota":
-		n, e := strconv.Atoi(value)
-		if e != nil || n < 1 || n > 100 {
-			return errors.New("注册配额范围 1–100")
-		}
-	case "maintenance":
-		if value != "on" && value != "off" {
-			return errors.New("maintenance: on / off")
-		}
-	case "maintenance_notice":
-		value = cleanText(value, 240)
-	case "retention":
-		if value != "permanent" {
-			return errors.New("消息必须永久保留，禁止启用自动清理")
-		}
-	default:
-		return errors.New("未知配置项")
-	}
 	return s.writeTransaction(func(tx *sql.Tx) error {
-		u, e := mutationActorQ(tx, actor)
-		if e != nil {
-			return e
-		}
-		if !isAdmin(u.Role) {
-			return errors.New("需要管理员权限")
-		}
-		if e = changedOne(tx.Exec(`INSERT INTO config VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)); e != nil {
-			return e
-		}
-		return auditQ(tx, u.Name, "config.set", key, value, "")
+		_, err := configurationChangesQ(tx, actor, []configurationChange{{Key: key, Value: value}})
+		return err
 	})
+}
+
+// trustedPeerAddress normalizes only trusted transport addresses for policy
+// matching, not stored login display or caller-provided policy network ranges.
+func trustedPeerAddress(raw string) (netip.Addr, error) {
+	address, err := netip.ParseAddr(raw)
+	if err != nil {
+		return netip.Addr{}, err
+	}
+	return address.WithZone("").Unmap(), nil
 }
 func normalizePrefix(raw string) (netip.Prefix, error) {
 	if p, e := netip.ParsePrefix(raw); e == nil {
@@ -481,142 +489,32 @@ func (s *Store) Unfriend(user, target string) error {
 }
 func noRows(err error) bool { return errors.Is(err, sql.ErrNoRows) }
 
-func (s *Store) Sanction(actor, kind, target, room, duration, reason string, remove bool) error {
-	if kind != "ip" && kind != "user" && kind != "mute" {
-		return errors.New("未知封禁类型")
-	}
-	if kind == "ip" {
-		p, e := normalizePrefix(target)
-		if e != nil {
-			return e
-		}
-		if p.Bits() == 0 {
-			return errors.New("不能封禁整个互联网地址段")
-		}
-		target = p.String()
-	}
-	expires := int64(0)
-	if !remove {
-		seconds, e := durationSeconds(duration)
-		if e != nil {
-			return e
-		}
-		if seconds > 0 {
-			expires = time.Now().Unix() + seconds
-		}
-	}
-	err := s.writeTransaction(func(tx *sql.Tx) error {
-		u, e := mutationActorQ(tx, actor)
-		if e != nil {
-			return e
-		}
-		global := isAdmin(u.Role)
-		if !global && (kind != "mute" || room == "" || !canManageQ(tx, u.Name, room)) {
-			return errors.New("没有此管理权限")
-		}
-		if kind != "ip" {
-			other, e := resolveUserQ(tx, target)
-			if e != nil {
-				return e
-			}
-			target = other.Name
-			if target == u.Name || roleRank(other.Role) >= roleRank(u.Role) && global {
-				return errors.New("不能管理自己、同级或更高角色")
-			}
-			if !global {
-				r, e := roomQ(tx, room)
-				if e != nil {
-					return e
-				}
-				if other.Name == r.Owner || isAdmin(other.Role) {
-					return errors.New("不能禁言频道所有者或管理员")
-				}
-			}
-		}
-		if remove {
-			if kind == "ip" {
-				desired, e := normalizePrefix(target)
-				if e != nil {
-					return e
-				}
-				rows, e := tx.Query(`SELECT id,target FROM sanctions WHERE kind='ip' AND room=? AND revoked=0`, room)
-				if e != nil {
-					return e
-				}
-				var matches []int64
-				for rows.Next() {
-					var id int64
-					var stored string
-					if e = rows.Scan(&id, &stored); e != nil {
-						rows.Close()
-						return e
-					}
-					prefix, err := normalizePrefix(stored)
-					if err != nil {
-						// Legacy wide mapped prefixes remain IPv6 policies; they
-						// must never be promoted into a blanket IPv4 /0 policy.
-						if legacy, parseErr := netip.ParsePrefix(stored); parseErr == nil && legacy.Addr().Is4In6() && legacy.Bits() < 96 {
-							prefix, err = legacy.Masked(), nil
-						}
-					}
-					if err == nil && prefix == desired {
-						matches = append(matches, id)
-					}
-				}
-				e = rows.Err()
-				rows.Close()
-				if e != nil {
-					return e
-				}
-				for _, id := range matches {
-					if e = changedOne(tx.Exec(`UPDATE sanctions SET revoked=1 WHERE id=? AND kind='ip'`, id)); e != nil {
-						return e
-					}
-				}
-			} else if _, e = tx.Exec(`UPDATE sanctions SET revoked=1 WHERE kind=? AND target=? AND room=?`, kind, target, room); e != nil {
-				return e
-			}
-			if kind == "user" {
-				if e = changedOne(tx.Exec(`UPDATE users SET banned=0 WHERE name=?`, target)); e != nil {
-					return e
-				}
-			}
-		} else if e = changedOne(tx.Exec(`INSERT INTO sanctions(kind,target,room,expires,reason,actor,at) VALUES(?,?,?,?,?,?,?)`, kind, target, room, expires, cleanText(reason, 240), u.Name, time.Now().Unix())); e != nil {
-			return e
-		}
-		action := "sanction.add"
-		if remove {
-			action = "sanction.remove"
-		}
-		return auditQ(tx, u.Name, action, kind+":"+target, reason, room)
-	})
-	if err == nil && kind == "ip" {
-		s.invalidateIPPolicy()
-	}
-	return err
-}
 func (s *Store) SetRole(actor, target, role string) error {
+	return s.writeTransaction(func(tx *sql.Tx) error { _, err := setRoleQ(tx, actor, target, role); return err })
+}
+func setRoleQ(q queryer, actor, target, role string) (string, error) {
 	if role != "admin" && role != "moderator" && role != "member" {
-		return errors.New("角色：admin / moderator / member")
+		return "", errors.New("角色：admin / moderator / member")
 	}
-	return s.writeTransaction(func(tx *sql.Tx) error {
-		u, e := mutationActorQ(tx, actor)
-		if e != nil {
-			return e
-		}
-		if u.Role != "owner" {
-			return errors.New("仅站长可分配全站角色")
-		}
-		other, e := resolveUserQ(tx, target)
-		if e != nil {
-			return e
-		}
-		if other.Name == u.Name || other.Role == "owner" {
-			return errors.New("站长身份只能通过服务器命令行设置")
-		}
-		if e = changedOne(tx.Exec(`UPDATE users SET role=? WHERE name=?`, role, other.Name)); e != nil {
-			return e
-		}
-		return auditQ(tx, u.Name, "role.set", other.Name, role, "")
-	})
+	u, err := mutationActorQ(q, actor)
+	if err != nil {
+		return "", err
+	}
+	if u.Role != "owner" {
+		return "", errors.New("仅站长可分配全站角色")
+	}
+	other, err := resolveUserQ(q, target)
+	if err != nil {
+		return "", err
+	}
+	if other.Name == u.Name || other.Role == "owner" {
+		return "", errors.New("站长身份只能通过服务器命令行设置")
+	}
+	if err = changedOne(q.Exec(`UPDATE users SET role=? WHERE name=?`, role, other.Name)); err != nil {
+		return "", err
+	}
+	if err = auditQ(q, u.Name, "role.set", other.Name, role, ""); err != nil {
+		return "", err
+	}
+	return other.Name, nil
 }

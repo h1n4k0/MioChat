@@ -80,11 +80,10 @@ func (s *Store) invalidateIPPolicy() {
 	s.ipPolicy.mu.Unlock()
 }
 func (s *Store) IPBannedContext(parent context.Context, raw string) bool {
-	address, err := netip.ParseAddr(raw)
+	address, err := trustedPeerAddress(raw)
 	if err != nil || parent.Err() != nil {
 		return true
 	}
-	address = address.Unmap()
 	ctx, cancel := context.WithTimeout(parent, 200*time.Millisecond)
 	defer cancel()
 	for {
@@ -136,7 +135,7 @@ func (s *Store) IPBannedContext(parent context.Context, raw string) bool {
 }
 
 func (s *Store) loadIPPolicy(ctx context.Context, now time.Time) ([]netip.Prefix, time.Time, error) {
-	rows, err := s.policyDB().QueryContext(ctx, `SELECT target,expires FROM sanctions WHERE kind='ip' AND revoked=0 AND (expires=0 OR expires>?)`, now.Unix())
+	rows, err := s.policyQueryContext(ctx, `SELECT target,expires FROM sanctions WHERE kind='ip' AND revoked=0 AND (expires=0 OR expires>?)`, now.Unix())
 	if err != nil {
 		return nil, time.Time{}, err
 	}

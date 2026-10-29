@@ -9,6 +9,7 @@
 /MioChat
 /MioChat.exe
 /coverage.out
+/gpui-client/target/
 __pycache__/
 *.pyc
 *.db

@@ -1,0 +1,33 @@
+[package]
+name = "miochat-gpui"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Native GPUI client for MioChat's structured SSH subsystem"
+rust-version = "1.96"
+repository = "https://github.com/mio-qwq/MioChat"
+
+[features]
+default = []
+linux-desktop = ["gpui_platform/wayland", "gpui_platform/x11"]
+
+[dependencies]
+anyhow = "1.0.100"
+crossbeam-channel = "0.5.15"
+gpui = { package = "gpui-pre", version = "=0.3.7", default-features = false }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", default-features = false }
+raw-window-handle = "=0.6.2"
+unicode-segmentation = "1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+
+[dev-dependencies]
+tempfile = "3.23.0"
+
+[profile.release]
+lto = "thin"
+strip = true
+
+[profile.dev]
+debug = 0
+

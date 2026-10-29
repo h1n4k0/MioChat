@@ -23,6 +23,13 @@ func (m *model) consumeEvents(first Event) {
 	}
 	added := map[int64]bool{}
 	for _, event := range events {
+		if event.Preferences {
+			m.settings = m.store.Settings(m.user.Name)
+			if u, err := m.store.User(m.user.Name); err == nil {
+				m.user.Theme = u.Theme
+			}
+			m.rebuild(false)
+		}
 		room, peer := m.room, m.peer
 		if event.MoveRoom != "" {
 			_ = m.forceMove(event.MoveRoom)

@@ -78,7 +78,7 @@ func makeServerWithPolicy(store *Store, hub *Hub, signer gossh.Signer, policy ss
 	var mu sync.Mutex
 	perIP := map[string]int{}
 	total := 0
-	srv := &ssh.Server{HostSigners: []ssh.Signer{signer}, Version: "MioChat", ChannelHandlers: map[string]ssh.ChannelHandler{}, RequestHandlers: map[string]ssh.RequestHandler{}}
+	srv := &ssh.Server{HostSigners: []ssh.Signer{signer}, Version: "MioChat", ChannelHandlers: map[string]ssh.ChannelHandler{}, RequestHandlers: map[string]ssh.RequestHandler{}, SubsystemHandlers: map[string]ssh.SubsystemHandler{}}
 	configureSSHTransport(srv, policy)
 	srv.ConnCallback = func(ctx ssh.Context, c net.Conn) net.Conn {
 		ip, _, _ := net.SplitHostPort(c.RemoteAddr().String())
@@ -101,21 +101,45 @@ func makeServerWithPolicy(store *Store, hub *Hub, signer gossh.Signer, policy ss
 			}
 			mu.Unlock()
 		}}
-		initializeSSHConnection(ctx, tracked, policy)
 		// Reserve capacity before any database wait. A failed admission check
 		// closes the tracked connection and releases exactly that reservation.
 		if store.IPBannedContext(ctx, ip) {
 			_ = tracked.Close()
 			return nil
 		}
+		// The SSH dependency does not cancel its initial context when this
+		// callback returns nil. Rejected connections must not start a login
+		// timer that then waits for its full application deadline.
+		initializeSSHConnection(ctx, tracked, policy)
 		return tracked
 	}
 	srv.SessionRequestCallback = func(s ssh.Session, kind string) bool {
-		if kind != "shell" {
+		if kind != "shell" && !(kind == "subsystem" && s.Subsystem() == guiSubsystemName) {
 			return false
 		}
 		v, ok := s.Context().Value(sessionKey{}).(*atomic.Int32)
 		return ok && v.CompareAndSwap(0, 1)
+	}
+	srv.SubsystemHandlers[guiSubsystemName] = func(s ssh.Session) {
+		closeSession := func() { _ = s.Close() }
+		if state, ok := s.Context().Value(sshTransportKey{}).(*sshTransportState); ok {
+			defer state.close()
+			closeSession = func() { _ = state.close() }
+		}
+		if !hub.beginUI() {
+			_ = s.Close()
+			return
+		}
+		defer hub.uiTasks.Done()
+		ip, _, _ := net.SplitHostPort(s.RemoteAddr().String())
+		version := string(s.Context().ClientVersion())
+		guiContext := context.Context(s.Context())
+		if key := s.PublicKey(); key != nil {
+			guiContext = context.WithValue(guiContext, guiSSHProofKey{}, key)
+		}
+		if err := runGUIProtocol(guiContext, s, s, ip, version, closeSession, store, hub); err != nil && !errors.Is(err, context.Canceled) {
+			store.Diagnostic("gui.session.error", err.Error())
+		}
 	}
 	srv.Handler = func(s ssh.Session) {
 		closeSession := func() { _ = s.Close() }
@@ -214,7 +238,18 @@ func run() error {
 	check := flag.Bool("check", false, "Validate configuration and database")
 	backup := flag.String("backup", "", "Create a consistent snapshot in a new directory")
 	restore := flag.String("restore", "", "Restore a validated snapshot while the instance is stopped")
+	dotPipes := flag.Bool("dot-private-pipes", false, "Enable explicitly inherited trusted dot adapter pipes (default off)")
+	dotReadFD := flag.Int("dot-read-fd", -1, "Explicit inherited dot request pipe descriptor")
+	dotWriteFD := flag.Int("dot-write-fd", -1, "Explicit inherited dot response pipe descriptor")
 	flag.Parse()
+	dotConfig := dotPipeConfig{Enabled: *dotPipes, ReadFD: *dotReadFD, WriteFD: *dotWriteFD}
+	if err := dotConfig.validate(); err != nil {
+		return err
+	}
+	if dotConfig.Enabled && (*version || *check || *promote != "" || *owner != "" || *backup != "" || *restore != "") {
+		return errors.New("dot private pipes cannot be mixed with one-shot operator actions")
+	}
+
 	if *version {
 		fmt.Println(appVersion)
 		return nil
@@ -256,6 +291,11 @@ func run() error {
 		}
 		return err
 	}
+	dotRuntime, err := prepareDotPrivatePipes(store, dotConfig)
+	if err != nil {
+		return err
+	}
+	defer dotRuntime.Close()
 	if _, err = store.db.Exec(`UPDATE sessions SET closed=? WHERE closed=0`, time.Now().Unix()); err != nil {
 		return err
 	}
@@ -274,7 +314,22 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() { <-ctx.Done(); hub.stopUI(); srv.Close() }()
+	var dotResult chan error
+	if dotRuntime != nil {
+		dotResult = make(chan error, 1)
+		go func() { dotResult <- dotRuntime.Serve(ctx); srv.Close() }()
+	}
 	err = srv.Serve(listener)
+	if dotResult != nil {
+		select {
+		case dotErr := <-dotResult:
+			if dotErr != nil && !errors.Is(dotErr, context.Canceled) {
+				return errors.New("trusted dot adapter pipe stopped; integration unavailable")
+			}
+		default:
+		}
+	}
+
 	if errors.Is(err, ssh.ErrServerClosed) {
 		return nil
 	}

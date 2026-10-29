@@ -71,6 +71,7 @@ type model struct {
 	currentAnnouncement                       string
 	newMessages, noticeCount                  int
 	panelTitle, panelKind                     string
+	secretPanel                               *tuiSecretPanel
 	panelMessageID                            int64
 	panelLines                                []string
 	panelActions                              []panelAction
@@ -86,6 +87,9 @@ type model struct {
 	composeKind, composeTitle, composeRoom    string
 	composePreview, composeFrozen             bool
 	composeSavedTitle, composeSavedBody       string
+	composeVersion                            int64
+	composeConflict, composeDiscardArmed      bool
+	composeRemote                             *CompositionSnapshot
 	positionVersion                           int64
 	positionSaved                             Position
 	positionUnknown                           bool
@@ -105,6 +109,7 @@ type model struct {
 	keyPromptFocus                            int
 	keyForm                                   *sshKeyForm
 	maintenanceCancel                         context.CancelFunc
+	maintenanceSequence, maintenanceID        uint64
 }
 
 func newModel(store *Store, hub *Hub, ctx context.Context, out io.Writer, term string, w, h int, ip string, closeFn func()) model {
@@ -338,6 +343,7 @@ func (m *model) moveLegacy(room, peer string) error {
 	return nil
 }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.revalidateSecretPanel(time.Now(), false)
 	switch x := msg.(type) {
 	case userClickMsg:
 		if m.lastClickName == x.Name && m.lastClickAt.Equal(x.At) {
@@ -353,7 +359,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.w, m.h = width, height
 		if m.composeKind != "" {
 			m.editor.SetWidth(max(10, m.w-6))
-			m.editor.SetHeight(max(1, m.h-7))
+			m.editor.SetHeight(m.compositionBodyHeight())
 		}
 		m.rebuild(false)
 		if m.panelTitle != "" {
@@ -361,6 +367,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case clockMsg:
+		m.revalidateSecretPanel(time.Time(x), false)
 		m.frame++
 		if m.frame%5 == 0 {
 			m.flushRates()
@@ -369,7 +376,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.frame%3 == 0 {
 				if u, ok := m.hub.RefreshClient(m.client); ok {
 					m.user = u
+					m.revalidateSecretPanel(time.Time(x), true)
 				} else {
+					m.closePanel()
 					return m, tea.Quit
 				}
 			}
@@ -473,6 +482,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		if x.String() == "ctrl+c" {
+			m.closePanel()
+			if m.composeKind != "" {
+				if err := m.saveCompositionDraft(); err != nil {
+					m.notice = "退出前草稿保存失败，窗口保留；F6/F7 处理冲突或F9→F10 明确舍弃：" + err.Error()
+					return m, nil
+				}
+			}
 			return m, tea.Quit
 		}
 		if handled, cmd := m.keyInteractions(x); handled {

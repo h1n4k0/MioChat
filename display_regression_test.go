@@ -136,7 +136,7 @@ func TestVisibleComposeCancelCannotPublish(t *testing.T) {
 			found := false
 			for y, row := range strings.Split(m.composeView(), "\n") {
 				row = ansi.Strip(row)
-				if at := strings.Index(row, "[Esc 取消]"); at >= 0 {
+				if at := strings.Index(row, "[Esc 保存]"); at >= 0 {
 					found = true
 					x := ansi.StringWidth(row[:at]) + 2
 					m.composeMouse(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})

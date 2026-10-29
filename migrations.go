@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-const schemaVersion = 4
+const schemaVersion = 7
 const appVersion = "2.1.1"
 
 // Additive database migrations preserve account credentials, message IDs and
@@ -87,6 +87,25 @@ DROP INDEX IF EXISTS messages_context;
 CREATE INDEX IF NOT EXISTS object_events_object ON object_events(object_id,id);
 `
 
+// Version rows outlive composition deletion. Six original composition columns
+// are unchanged, so legacy INSERT VALUES fixtures still participate in CAS.
+const schemaCompositionsSQL = `
+CREATE TABLE IF NOT EXISTS composition_versions(user TEXT NOT NULL REFERENCES users(name),room TEXT NOT NULL REFERENCES rooms(name),kind TEXT NOT NULL,version INTEGER NOT NULL CHECK(typeof(version)='integer' AND version>=1),PRIMARY KEY(user,room,kind));
+INSERT OR IGNORE INTO composition_versions(user,room,kind,version) SELECT user,room,kind,1 FROM compositions;
+CREATE TRIGGER IF NOT EXISTS composition_version_no_delete BEFORE DELETE ON composition_versions BEGIN SELECT RAISE(ABORT,'composition version tombstones are retained');END;
+CREATE TRIGGER IF NOT EXISTS composition_version_monotonic BEFORE UPDATE OF version ON composition_versions WHEN new.version<=old.version BEGIN SELECT RAISE(ABORT,'composition versions only advance');END;
+CREATE TRIGGER IF NOT EXISTS composition_version_insert AFTER INSERT ON compositions BEGIN
+ INSERT INTO composition_versions VALUES(new.user,new.room,new.kind,1) ON CONFLICT(user,room,kind) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER IF NOT EXISTS composition_version_update AFTER UPDATE ON compositions BEGIN
+ INSERT INTO composition_versions VALUES(new.user,new.room,new.kind,1) ON CONFLICT(user,room,kind) DO UPDATE SET version=version+1;
+ INSERT INTO composition_versions SELECT old.user,old.room,old.kind,1 WHERE old.user!=new.user OR old.room!=new.room OR old.kind!=new.kind ON CONFLICT(user,room,kind) DO UPDATE SET version=version+1;
+END;
+CREATE TRIGGER IF NOT EXISTS composition_version_delete AFTER DELETE ON compositions BEGIN
+ INSERT INTO composition_versions VALUES(old.user,old.room,old.kind,1) ON CONFLICT(user,room,kind) DO UPDATE SET version=version+1;
+END;
+`
+
 func migrate(db *sql.DB, path string, legacy bool) error {
 	var version int
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
@@ -119,7 +138,7 @@ func migrate(db *sql.DB, path string, legacy bool) error {
 	for _, step := range []struct {
 		version int
 		sql     string
-	}{{2, schemaBaseSQL}, {3, schemaKeysSQL}, {4, schemaSecuritySQL}} {
+	}{{2, schemaBaseSQL}, {3, schemaKeysSQL}, {4, schemaSecuritySQL}, {5, schemaCompositionsSQL}, {6, schemaAttachmentsSQL}, {7, schemaDotSQL}} {
 		if version >= step.version {
 			continue
 		}

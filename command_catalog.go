@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -440,6 +439,7 @@ func (m *model) extendedCommand(line string) (bool, tea.Cmd) {
 		err = m.store.Setting(m.user.Name, args[0], args[1])
 		if err == nil {
 			m.settings = m.store.Settings(m.user.Name)
+			m.hub.PreferencesChanged(m.user.Name)
 			m.rebuild(false)
 			m.note("偏好已保存")
 		}
@@ -447,6 +447,7 @@ func (m *model) extendedCommand(line string) (bool, tea.Cmd) {
 		err = m.store.Setting(m.user.Name, "dnd", arg)
 		if err == nil {
 			m.settings = m.store.Settings(m.user.Name)
+			m.hub.PreferencesChanged(m.user.Name)
 			m.note("勿扰设置已保存")
 		}
 	case "/avatar":
@@ -469,6 +470,7 @@ func (m *model) extendedCommand(line string) (bool, tea.Cmd) {
 			err = m.store.Profile(m.user.Name, "theme", arg)
 			if err == nil {
 				m.user.Theme = arg
+				m.hub.PreferencesChanged(m.user.Name)
 				m.rebuild(false)
 			}
 		default:
@@ -551,13 +553,10 @@ func (m *model) extendedCommand(line string) (bool, tea.Cmd) {
 			m.note("其他设备已退出")
 		}
 	case "/kick":
-		u, e := m.store.User(m.user.Name)
-		other, oe := m.store.Resolve(arg)
-		if e != nil || oe != nil || !isAdmin(u.Role) || roleRank(other.Role) >= roleRank(u.Role) {
-			err = fmt.Errorf("不能踢出此账户")
-		} else {
-			m.hub.Kick(other.Name)
-			err = auditQ(m.store.db, m.user.Name, "user.kick", other.Name, "", "")
+		var canonical string
+		canonical, err = m.store.kickAudited(m.user.Name, arg)
+		if err == nil {
+			m.hub.Kick(canonical)
 		}
 	case "/ban", "/unban", "/mute", "/unmute", "/gmute", "/ungmute", "/banip", "/unbanip":
 		if len(args) == 0 {
@@ -594,8 +593,12 @@ func (m *model) extendedCommand(line string) (bool, tea.Cmd) {
 				err = e
 				break
 			}
-			ip, e := netip.ParseAddr(m.ip)
-			if e == nil && prefix.Contains(ip.Unmap()) && !strings.Contains(reason, "--force") {
+			ip, e := trustedPeerAddress(m.ip)
+			if e != nil {
+				err = fmt.Errorf("无法核验当前聊天室连接IP，未提交封禁")
+				break
+			}
+			if prefix.Contains(ip) && !strings.Contains(reason, "--force") {
 				err = fmt.Errorf("将影响你当前的聊天室连接；确认时在原因末尾加 --force，管理SSH不受影响")
 				break
 			}
@@ -692,11 +695,12 @@ func (m *model) extendedCommand(line string) (bool, tea.Cmd) {
 			m.note("角色已更新")
 		}
 	case "/resetpass":
-		password, e := m.store.ResetPassword(m.user.Name, arg)
+		out, e := m.store.ResetPasswordForSession(m.ctx, m.user.Name, arg, m.client.ID)
 		err = e
 		if e == nil {
+			// Enforcement is independent of whether the result may be shown.
 			m.hub.Enforce()
-			m.openPanel("临时密码（仅此次显示）", "secret", []string{password, "请安全交付给该用户；下次登录必须改密。", "原有设备密钥已撤销，用户改密后可重新绑定。", "原密码不可查看。临时密码不会写入管理日志。"}, nil)
+			m.showSecretAdmin(out)
 		}
 	case "/config":
 		key, value := splitArgument(arg)
@@ -711,10 +715,7 @@ func (m *model) extendedCommand(line string) (bool, tea.Cmd) {
 		}
 	case "/maintenance":
 		state, notice := splitArgument(arg)
-		err = m.store.SetConfig(m.user.Name, "maintenance", state)
-		if err == nil && notice != "" {
-			err = m.store.SetConfig(m.user.Name, "maintenance_notice", notice)
-		}
+		err = m.store.SetMaintenance(m.user.Name, state, notice)
 		if err == nil {
 			m.hub.Refresh()
 			m.note("维护状态已更新")
@@ -729,10 +730,10 @@ func (m *model) extendedCommand(line string) (bool, tea.Cmd) {
 			uses, err = strconv.Atoi(args[1])
 		}
 		if err == nil {
-			code, e := m.store.InviteCode(m.user.Name, duration, uses)
+			out, e := m.store.InviteCodeForSession(m.ctx, m.user.Name, duration, uses, m.client.ID)
 			err = e
 			if e == nil {
-				m.openPanel("注册邀请码（仅此次显示）", "secret", []string{code, fmt.Sprintf("期限 %s · 使用次数 %d", duration, uses)}, nil)
+				m.showSecretAdmin(out)
 			}
 		}
 	case "/backup":
@@ -740,9 +741,8 @@ func (m *model) extendedCommand(line string) (bool, tea.Cmd) {
 	case "/check":
 		return true, m.startMaintenance("check")
 	case "/canceljob":
-		if m.maintenanceCancel != nil {
-			m.maintenanceCancel()
-			m.note("正在取消后台作业…")
+		if m.cancelMaintenance(m.maintenanceID) {
+			m.note("已请求取消后台作业；已提交的备份不会撤回…")
 		} else {
 			m.note("当前连接没有后台维护作业")
 		}

@@ -14,7 +14,7 @@ import (
 )
 
 func migrationRows(t *testing.T, db queryer) map[string][]string {
-	return migrationRowsExcept(t, db, "schema_migrations", "ssh_keys", "session_credentials", "credential_versions", "session_versions", "position_versions", "draft_conflicts")
+	return migrationRowsExcept(t, db, "schema_migrations", "ssh_keys", "session_credentials", "credential_versions", "session_versions", "position_versions", "draft_conflicts", "composition_versions")
 }
 
 func migrationRowsExcept(t *testing.T, db queryer, excluded ...string) map[string][]string {
@@ -73,7 +73,60 @@ func migrationRowsExcept(t *testing.T, db queryer, excluded ...string) map[strin
 	return result
 }
 
-func TestSchemaThreeToFourPreservesKeysSessionsRowsAndHostIdentity(t *testing.T) {
+// Compare the original projection without mistaking explicit v6/v7 additive
+// tables/defaults for mutation of old data. Unknown additions remain visible;
+// an existing table/key is never removed from the comparison.
+func migrationOriginalProjection(t *testing.T, before, after map[string][]string) map[string][]string {
+	t.Helper()
+	result := make(map[string][]string, len(after))
+	for name, rows := range after {
+		result[name] = append([]string{}, rows...)
+	}
+	for _, name := range []string{
+		"attachment_writer_guard", "attachment_room_epochs", "attachment_quota", "attachment_uploads", "attachment_chunks", "message_attachments", "attachment_reference_intents",
+		"dot_room_epochs", "dot_bindings", "dot_oauth_links", "dot_subscriptions", "dot_events", "dot_operations", "dot_reviews", "dot_message_origins",
+	} {
+		if _, existed := before[name]; !existed {
+			if _, added := after[name]; !added {
+				t.Errorf("missing additive table %s", name)
+			}
+			delete(result, name)
+		}
+	}
+	oldKeys := map[string]bool{}
+	for _, row := range before["config"] {
+		var values []string
+		if err := json.Unmarshal([]byte(row), &values); err != nil || len(values) != 2 {
+			t.Fatal("invalid original config projection", row, err)
+		}
+		oldKeys[values[0]] = true
+	}
+	for key, value := range map[string]string{"dot_enabled": "off", "dot_installation_id": ""} {
+		if oldKeys[key] {
+			continue
+		}
+		encoded, err := json.Marshal([]string{key, value})
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := 0
+		rows := make([]string, 0, len(result["config"]))
+		for _, row := range result["config"] {
+			if row == string(encoded) {
+				found++
+			} else {
+				rows = append(rows, row)
+			}
+		}
+		if found != 1 {
+			t.Errorf("missing or changed additive config default %s", key)
+		}
+		result["config"] = rows
+	}
+	return result
+}
+
+func TestSchemaThreeToCurrentPreservesKeysSessionsRowsAndHostIdentity(t *testing.T) {
 	state := t.TempDir()
 	path := filepath.Join(state, "miochat.db")
 	db, err := sql.Open("sqlite", path)
@@ -116,7 +169,7 @@ PRAGMA journal_mode=WAL;`,
 	if _, err = db.Exec(`INSERT INTO session_credentials VALUES('v3-active',1),('v3-closed',1),('v3-revoked',2)`); err != nil {
 		t.Fatal(err)
 	}
-	excluded := []string{"schema_migrations", "credential_versions", "session_versions", "position_versions", "draft_conflicts"}
+	excluded := []string{"schema_migrations", "credential_versions", "session_versions", "position_versions", "draft_conflicts", "composition_versions"}
 	before := migrationRowsExcept(t, db, excluded...)
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
@@ -134,17 +187,17 @@ PRAGMA journal_mode=WAL;`,
 		t.Fatal(err)
 	}
 	defer s.db.Close()
-	if after := migrationRowsExcept(t, s.db, excluded...); !reflect.DeepEqual(before, after) {
-		t.Error("schema 3 to 4 changed the original table set or rows")
+	if after := migrationOriginalProjection(t, before, migrationRowsExcept(t, s.db, excluded...)); !reflect.DeepEqual(before, after) {
+		t.Error("schema 3 to current changed the original table set or rows")
 		for name := range before {
 			if !reflect.DeepEqual(before[name], after[name]) {
-				t.Error("schema 3 to 4 changed original rows", name)
+				t.Error("schema 3 to current changed original rows", name)
 			}
 		}
 	}
 	var version, oldSteps, credentialRows, sessionRows, positionRows int
-	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 4 {
-		t.Fatal("schema 4 was not installed", err, version)
+	if err = s.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != schemaVersion {
+		t.Fatal("current schema was not installed", err, version)
 	}
 	if err = s.db.QueryRow(`SELECT count(*) FROM schema_migrations WHERE (version=2 AND applied=1700000002) OR (version=3 AND applied=1700000003)`).Scan(&oldSteps); err != nil || oldSteps != 2 {
 		t.Fatal("old migration records changed", err, oldSteps)
@@ -164,7 +217,7 @@ PRAGMA journal_mode=WAL;`,
 	if err = s.db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	backups, _ := filepath.Glob(path + ".pre-v4-*.bak")
+	backups, _ := filepath.Glob(fmt.Sprintf("%s.pre-v%d-*.bak", path, schemaVersion))
 	if len(backups) != 1 {
 		t.Fatal("missing single schema-3 backup", backups)
 	}
@@ -185,10 +238,10 @@ PRAGMA journal_mode=WAL;`,
 		t.Fatal(err)
 	}
 	defer s.db.Close()
-	if !reflect.DeepEqual(before, migrationRowsExcept(t, s.db, excluded...)) {
-		t.Fatal("reopening schema 4 changed original rows")
+	if !reflect.DeepEqual(before, migrationOriginalProjection(t, before, migrationRowsExcept(t, s.db, excluded...))) {
+		t.Fatal("reopening current schema changed original rows")
 	}
-	again, _ := filepath.Glob(path + ".pre-v4-*.bak")
+	again, _ := filepath.Glob(fmt.Sprintf("%s.pre-v%d-*.bak", path, schemaVersion))
 	hostAfter, err := digestFile(hostPath)
 	if err != nil || hostAfter != hostBefore || len(again) != 1 {
 		t.Fatal("reopen replaced host identity or repeated the upgrade", err, hostBefore, hostAfter, len(again))
@@ -231,7 +284,8 @@ func TestStorageMigrationPreservesEveryOriginalTableAndHostKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after := migrationRows(t, s.db); !reflect.DeepEqual(before, after) {
+	if after := migrationOriginalProjection(t, before, migrationRows(t, s.db)); !reflect.DeepEqual(before, after) {
+		t.Error("migration changed the original table set or rows")
 		for name := range before {
 			if !reflect.DeepEqual(before[name], after[name]) {
 				t.Error("migration changed original table", name)
@@ -265,7 +319,7 @@ func TestStorageMigrationPreservesEveryOriginalTableAndHostKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.db.Close()
-	if !reflect.DeepEqual(before, migrationRows(t, s.db)) {
+	if !reflect.DeepEqual(before, migrationOriginalProjection(t, before, migrationRows(t, s.db))) {
 		t.Fatal("repeat migration changed old data")
 	}
 	again, _ := filepath.Glob(fmt.Sprintf("%s.pre-v%d-*.bak", path, schemaVersion))
